@@ -18,7 +18,26 @@ export function run(program, opts = {}) {
   if (opts.output) {
     program.setOutput(opts.output)
   }
-  return runProgram(program)
+  return runSteps(program)
+}
+
+export function makeInputBuffer(initial = []) {
+  const buffer = initial.slice()
+  const input = function() {
+    if (buffer.length === 0) {
+      throw new Error("Buffer is empty")
+    }
+    const val = buffer.shift()
+    console.log('input returns', val)
+    return val
+  }
+  input.__buffer = buffer
+  input.push = val => {
+    console.log('input push', val)
+    buffer.push(val)
+    return input
+  }
+  return input
 }
 
 const commands = []
@@ -50,53 +69,72 @@ function createState(initial) {
   // console.log(`initial`, initial)
   const memory = initial.slice()
   let cursor = 0
-  let inputFun, outputFun
+  let halted = false
+  let exitCode
   const state = { 
+    setHalted: code => {
+      halted = true
+      exitCode = code
+    },
+    isHalted: () => halted,
     moveTo: n => { cursor = n },
     pos: () => cursor,
     read: () => memory[cursor++],
     get: n => {
       if (typeof memory[n] === 'undefined') {
+        console.error("memory: ", memory)
         throw new Error(`Failed to read position ${n}`)
       }
       return memory[n]
     },
     set: (n, v) => {
+      const type = typeof v
+      if (type !== 'number') {
+        throw new Error(`Cannot write value of type ${type} at position ${n}`)
+      }
       memory[n] = v 
     }, 
     transform: fn => fn(memory),
     snapshot: () => memory.slice(),
-    setInput: inp => { inputFun = inp },
-    setOutput: outp => { outputFun = outp },
+    setInput: inp => { 
+      state.input = inp
+      return state
+    },
+    setOutput: outp => { 
+      state.output = outp 
+      return state
+    },
     withIO: (inp, outp) => {
       state.setInput(inp)
       state.setOutput(outp)
       return state
     },
     fork: () => createState(memory),
-    input: () => inputFun(),
-    output: val => outputFun(val)
-    // output
+    input: () => { throw new Error("Input not initialized") },
+    output: () => { throw new Error("output not initialized") },
   }
 
   return state 
 }
 
-function runProgram(program, input, output) {
+export function runSteps(program, iterations = Infinity) {
   let cursor = 0
   try {
-    while (true) {
+    while (iterations-- > 0) {
       let opcode = program.read()
       let op = readOpcode(opcode)
       let args = readArgs(program, op)
       runCommand(program, op, args)
     }
   } catch (e) {
+    console.log('program exit', e)
     if (e.exitCode) {
+      program.setHalted(e.exitCode)
       console.error("Program error", e)
       return `Exit: ${e.exitCode}`
     } else {
       if (e.exitCode === 0) {
+        program.setHalted(0)
         return program.snapshot()
       }
       console.error("Program error", e)
@@ -111,6 +149,7 @@ function exit(exitCode) {
 }
 
 function readOpcode(opcode) {
+  console.log(`opcode`, opcode)
   const str = opcode.toString().padStart(5, 0)
   const code = parseInt(str.slice(-2))
   const pos1 = parseInt(str.slice(-3,-2))
@@ -202,3 +241,4 @@ createCommand(EQUALS, function(program, op, pos1, pos2, outpos) {
   const arg2 = deref(program, op.modes[2], pos2)
   program.set(outpos, arg1 === arg2 ? 1 : 0)
 })
+

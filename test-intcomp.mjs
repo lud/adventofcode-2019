@@ -1,4 +1,4 @@
-import { run } from './intcomp'
+import { run, compile, makeInputBuffer } from './intcomp'
 
 function assertEquals(left, right) {
   if (left.toString() !== right.toString())
@@ -12,9 +12,20 @@ assertEquals(run('2,3,0,3,99'), [ 2, 3, 0, 6, 99 ])
 assertEquals(run('2,4,4,5,99,0'), [ 2, 4, 4, 5, 99, 9801 ])
 assertEquals(run('1,1,1,4,99,5,6,0,99'), [ 30, 1, 1, 4, 2, 5, 6, 0, 99 ])
 
-const input = () => 1234
-const output = val => assertEquals(val, 1234)
-run('3,5,4,5,99', {input, output})
+;(function(){
+  const input = () => 1234
+  const output = val => assertEquals(val, 1234)
+  run('3,5,4,5,99', {input, output})
+}())
+
+;(function(){
+  const input = makeInputBuffer()
+  const output = val => assertEquals(val, 1234)
+  const program = compile('3,5,4,5,99').setInput(input)
+  input.push(1234)
+  console.log(`input.__buffer`, input.__buffer)
+  run('3,5,4,5,99', {input, output})
+}())
 
 
 assertEquals(run('1002,4,3,4,33'), [ 1002,4,3,4,99 ])
