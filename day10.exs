@@ -1,5 +1,5 @@
 defmodule Roid do
-  defstruct xy: nil, x: nil, y: nil, paths: nil, reach: 0, symb: "#", hex: 0
+  defstruct xy: nil, x: nil, y: nil, paths: nil, reach: 0, symb: "#", sreach: 0
 
   def new({x, y} = xy) do
     %Roid{xy: xy, x: x, y: y}
@@ -10,8 +10,8 @@ defmodule Roid do
   end
 
   def set_reach(roid, reach) do
-    hex = Integer.to_string(reach, 16)
-    %Roid{roid | reach: reach, hex: hex}
+    sreach = Integer.to_string(reach, 32)
+    %Roid{roid | reach: reach, sreach: sreach}
   end
 
   def set_paths(roid, paths) do
@@ -20,10 +20,16 @@ defmodule Roid do
 end
 
 defmodule FlyPath do
-  defstruct vector: nil, directions: nil, distance: nil, ratio: nil
+  defstruct vector: nil, directions: nil, distance: nil, ratio: nil, clock: nil
 
-  def new({vector, directions, distance, ratio}) do
-    %__MODULE__{vector: vector, directions: directions, distance: distance, ratio: ratio}
+  def new({vector, directions, distance, ratio, clock}) do
+    %__MODULE__{
+      vector: vector,
+      directions: directions,
+      distance: distance,
+      ratio: ratio,
+      clock: clock
+    }
   end
 end
 
@@ -32,7 +38,6 @@ defmodule Starmap do
     str
     |> String.split("\n")
     |> Enum.map(&parse_x/1)
-    |> IO.inspect()
     |> Enum.with_index()
     |> add_y
     |> Map.new()
@@ -101,35 +106,32 @@ defmodule Day10 do
   @primes [1, 2] ++
             (2..10
              |> Enum.reject(fn n -> Enum.any?(2..(n - 1), &(rem(n, &1) == 0)) end))
-  IO.inspect(@primes)
 
   def run(str) do
-    map =
+    start_map =
+      map =
       str
       |> String.trim()
       |> Starmap.parse_map()
-      |> IO.inspect()
 
+    run_map(map)
+  end
+
+  defp run_map(start_map) do
+    map = start_map
     {map_max_x, map_max_y} = Starmap.max_coords(map)
 
     map =
       map
-      |> Starmap.fmap(&fly_to_all_others(&1, map))
-      |> IO.inspect()
+      |> Starmap.fmap(&fly_to_all_others(&1, map, map_max_x, map_max_y))
       |> Starmap.fmap(&reduce_fly_paths/1)
 
     map =
       map
       |> Starmap.fmap(&count_reach/1)
-      |> IO.inspect()
-
-    # map =
-    #   map
-    #   |> Starmap.fmap(&simulate_reach(&1, map, map_max_x, map_max_y))
-    #   |> IO.inspect()
 
     print_map(map, map_max_x, map_max_y, :symb)
-    print_map(map, map_max_x, map_max_y, :hex)
+    print_map(map, map_max_x, map_max_y, :sreach)
 
     # Starmap.get(map, {3, 4})
 
@@ -146,23 +148,17 @@ defmodule Day10 do
     print_map_reach(map, best, map_max_x, map_max_y, :symb)
 
     IO.puts("best: #{best.x},#{best.y} => #{best.reach}")
-    # Starmap.get(map, {0, 0})
-    #   reach_map
-    #   |> Enum.reduce(fn {pos, _vx, count} = roid, {best, max} = acc ->
-    #     if count > max do
-    #       roid
-    #     else
-    #       acc
-    #     end
-    #   end)
+
+    print_map(start_map, map_max_x, map_max_y, :symb)
   end
 
   defp count_reach(roid) do
     Roid.set_reach(roid, Map.size(roid.paths))
   end
 
-  defp reduce_fly_paths(%Roid{} = roid),
-    do: Map.update!(roid, :paths, &reduce_fly_paths/1)
+  defp reduce_fly_paths(%Roid{} = roid) do
+    Map.update!(roid, :paths, &reduce_fly_paths/1)
+  end
 
   # For each roid, we will see if there is another roid in the same
   # direction (same ratio) but with a closer distance, and reject it
@@ -176,7 +172,6 @@ defmodule Day10 do
         {_, fp2} ->
           if fp.directions == fp2.directions and fp.ratio == fp2.ratio and
                fp.distance > fp2.distance do
-            IO.puts("rejected !")
             true
           else
             false
@@ -186,12 +181,12 @@ defmodule Day10 do
     |> Enum.into(%{})
   end
 
-  defp fly_to_all_others(roid, map) do
+  defp fly_to_all_others(roid, map, map_max_x, map_max_y) do
     paths =
       map
       |> Starmap.fmap(fn
         ^roid -> nil
-        other -> compute_fly_path(roid, other)
+        other -> compute_fly_path(roid, other, map_max_x, map_max_y)
       end)
       |> Enum.filter(fn
         {_, nil} -> false
@@ -202,21 +197,64 @@ defmodule Day10 do
     Roid.set_paths(roid, paths)
   end
 
-  defp compute_fly_path(roid, other) do
+  defp compute_fly_path(roid, other, map_max_x, map_max_y) do
     {x, y} = roid.xy
     {x2, y2} = other.xy
     vector = {vx, vy} = {x2 - x, y2 - y}
     directions = get_directions(vector)
     distance = abs(vx) + abs(vy)
 
-    ratio =
+    {ratio, clockval} =
       case {vector, directions} do
-        {{x, 0}, {dx, dy}} -> dx
-        {{0, y}, {dx, dy}} -> dy
-        {{x, y}, _} -> Float.round(abs(x) / abs(y), 5)
+        # 270 degrees === 9h oclock
+        # left
+        {{x, 0}, {-1, :straight}} ->
+          {dx, 270}
+
+        # right
+        {{x, 0}, {1, :straight}} ->
+          {dx, 90}
+
+        # top
+        {{0, y}, {dx, -1}} ->
+          {dy, 0}
+
+        # bottom
+        {{0, y}, {dx, 1}} ->
+          {dy, 180}
+
+        {{x, y}, directions} when x != 0 and y != 0 ->
+          # I can't to math in erlang so we will use a simple trick
+          clock =
+            case {dx, dy} do
+              # from 0 to 3 hours
+              {1, -1} when x > 0 and y < 0 ->
+                # increasing y ..0 makes the clock bakcwards so we
+                # subtract its abs value (we add it as it is negative)
+                # 100 * x - abs(y)
+                # increasing 0..x makes the clock turn
+                100 * x + y
+
+              # from 3 to 6 hours
+              {1, 1} when x > 0 and y > 0 ->
+                # increasing x makes the clock tend to 3
+                # increasing y makes the clock tend to 6
+                # so we subtract x
+                10000 * y - 100 * x
+
+              # from 6 to 9 hours
+              {-1, 1} when x < 0 and y > 0 ->
+                -1_000_000 * x - 10000 * y
+
+              {-1, -1} when x < 0 and y < 0 ->
+                -100_000_000 * x - 1_000_000 * y
+            end
+
+          ratio = Float.round(abs(x) / abs(y), 5)
+          {ratio, clock}
       end
 
-    FlyPath.new({vector, directions, distance, ratio})
+    FlyPath.new({vector, directions, distance, ratio, clockval})
   end
 
   defp get_directions({x, y}),
@@ -292,54 +330,61 @@ end
 # ....#
 # ...##
 # """
-"""
-......#.#.
-#..#.#....
-..#######.
-.#.#.###..
-.#..#.....
-..#....#.#
-#..#....#.
-.##.#..###
-##...#..#.
-.#....####
-"""
+# """
+# ......#.#.
+# #..#.#....
+# ..#######.
+# .#.#.###..
+# .#..#.....
+# ..#....#.#
+# #..#....#.
+# .##.#..###
+# ##...#..#.
+# .#....####
+# """
 
-"""
-.#..#..###
-####.###.#
-....###.#.
-..###.##.#
-##.##.#.#.
-....###..#
-..#.#..#.#
-#..#.#.###
-.##...##.#
-.....#.#..
-"""
+# """
+# .#..#..###
+# ####.###.#
+# ....###.#.
+# ..###.##.#
+# ##.##.#.#.
+# ....###..#
+# ..#.#..#.#
+# #..#.#.###
+# .##...##.#
+# .....#.#..
+# """
 
+# """
+# ...###.#########.####
+# .######.###.###.##...
+# ####.########.#####.#
+# ########.####.##.###.
+# ####..#.####.#.#.##..
+# #.################.##
+# ..######.##.##.#####.
+# #.####.#####.###.#.##
+# #####.#########.#####
+# #####.##..##..#.#####
+# ##.######....########
+# .#######.#.#########.
+# .#.##.#.#.#.##.###.##
+# ######...####.#.#.###
+# ###############.#.###
+# #.#####.##..###.##.#.
+# ##..##..###.#.#######
+# #..#..########.#.##..
+# #.#.######.##.##...##
+# .#.##.#####.#..#####.
+# #.#.##########..#.##.
+# """
 """
-...###.#########.####
-.######.###.###.##...
-####.########.#####.#
-########.####.##.###.
-####..#.####.#.#.##..
-#.################.##
-..######.##.##.#####.
-#.####.#####.###.#.##
-#####.#########.#####
-#####.##..##..#.#####
-##.######....########
-.#######.#.#########.
-.#.##.#.#.#.##.###.##
-######...####.#.#.###
-###############.#.###
-#.#####.##..###.##.#.
-##..##..###.#.#######
-#..#..########.#.##..
-#.#.######.##.##...##
-.#.##.#####.#..#####.
-#.#.##########..#.##.
+.#....#####...#..
+##...##.#####..##
+##...#...#.#####.
+..#.....X...###..
+..#.#.....#....##
 """
 |> Day10.run()
 |> IO.inspect()
