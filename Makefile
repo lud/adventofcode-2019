@@ -9,3 +9,6 @@ day5:
 
 day7:
 	node --experimental-modules day7.mjs
+
+day9:
+	node --experimental-modules day9.mjs

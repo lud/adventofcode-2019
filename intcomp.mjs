@@ -28,12 +28,11 @@ export function makeInputBuffer(initial = []) {
       throw new Error("Buffer is empty")
     }
     const val = buffer.shift()
-    console.log('input returns', val)
+    console.log(`input`, val)
     return val
   }
   input.__buffer = buffer
   input.push = val => {
-    console.log('input push', val)
     buffer.push(val)
     return input
   }
@@ -66,11 +65,11 @@ function argsNumber(op) {
 }
 
 function createState(initial) {
-  // console.log(`initial`, initial)
   const memory = initial.slice()
   let cursor = 0
   let halted = false
   let exitCode
+  let relativeBase = 0
   const state = { 
     setHalted: code => {
       halted = true
@@ -78,14 +77,20 @@ function createState(initial) {
     },
     isHalted: () => halted,
     moveTo: n => { cursor = n },
+    offsetRelative: n => {
+      relativeBase += n
+    },
+    rel: pos => relativeBase + pos,
     pos: () => cursor,
     read: () => memory[cursor++],
-    get: n => {
-      if (typeof memory[n] === 'undefined') {
-        console.error("memory: ", memory)
-        throw new Error(`Failed to read position ${n}`)
+    get: pos => {
+      if (typeof memory[pos] === 'undefined') {
+        return 0
       }
-      return memory[n]
+      return memory[pos]
+    },
+    getRel: pos => {
+      return state.get(state.rel(pos))
     },
     set: (n, v) => {
       const type = typeof v
@@ -149,7 +154,6 @@ function exit(exitCode) {
 }
 
 function readOpcode(opcode) {
-  console.log(`opcode`, opcode)
   const str = opcode.toString().padStart(5, 0)
   const code = parseInt(str.slice(-2))
   const pos1 = parseInt(str.slice(-3,-2))
@@ -167,54 +171,65 @@ function readArgs(program, op) {
   return args
 }
 
+const POSITIONAL = 0
+const IMMEDIATE = 1
+const RELATIVE = 2
+
 function deref(program, mode, posOrVal) {
   switch (mode) {
     case IMMEDIATE: return posOrVal // val
     case POSITIONAL: return program.get(posOrVal) // pos => val
+    case RELATIVE: return program.getRel(posOrVal) // pos => val
     default:
       exit(2)
   }
 }
 
-const POSITIONAL = 0
-const IMMEDIATE = 1
+function offset(program, mode, pos) {
+  switch (mode) {
+    case POSITIONAL: return pos
+    case RELATIVE: return program.rel(pos)
+    default:
+      exit(3)
+  }
+}
 
-const HALT = 99
-const ADD = 1
-const MULT = 2
-const INP = 3
-const OUT = 4
-const JUMP_IF = 5
-const JUMP_IFNOT = 6
-const LESS_THAN = 7
-const EQUALS = 8
 
-createCommand(HALT, function(program, op) {
+// HALT
+createCommand(99, function(program, op) {
   exit(0)
 })
 
-createCommand(ADD, function(program, op, pos1, pos2, outpos) {
+// ADD
+createCommand(1, function(program, op, pos1, pos2, outpos) {
   const arg1 = deref(program, op.modes[1], pos1)
   const arg2 = deref(program, op.modes[2], pos2)
+  outpos = offset(program, op.modes[3], outpos)
   program.set(outpos, arg1 + arg2)
 })
 
-createCommand(MULT, function(program, op, pos1, pos2, outpos) {
+// MULT
+createCommand(2, function(program, op, pos1, pos2, outpos) {
   const arg1 = deref(program, op.modes[1], pos1)
   const arg2 = deref(program, op.modes[2], pos2)
+  outpos = offset(program, op.modes[3], outpos)
   program.set(outpos, arg1 * arg2)
 })
 
-createCommand(INP, function(program, op, pos) {
+// INPUT
+createCommand(3, function(program, op, pos) {
+  pos = offset(program, op.modes[1], pos)
   program.set(pos, program.input())
 })
 
-createCommand(OUT, function(program, op, pos1) {
+// OUTPUT
+createCommand(4, function(program, op, pos1) {
   const val = deref(program, op.modes[1], pos1)
   program.output(val)
 })
 
-createCommand(JUMP_IF, function(program, op, pos1, pos2) {
+// JUMP_IF
+createCommand(5, function(program, op, pos1, pos2) {
   const arg1 = deref(program, op.modes[1], pos1)
   const arg2 = deref(program, op.modes[2], pos2)
   if (arg1 !== 0) {
@@ -222,7 +237,8 @@ createCommand(JUMP_IF, function(program, op, pos1, pos2) {
   }
 })
 
-createCommand(JUMP_IFNOT, function(program, op, pos1, pos2) {
+// JUMP_IFNOT
+createCommand(6, function(program, op, pos1, pos2) {
   const arg1 = deref(program, op.modes[1], pos1)
   const arg2 = deref(program, op.modes[2], pos2)
   if (arg1 === 0) {
@@ -230,15 +246,25 @@ createCommand(JUMP_IFNOT, function(program, op, pos1, pos2) {
   }
 })
 
-createCommand(LESS_THAN, function(program, op, pos1, pos2, outpos) {
+// LESS_THAN
+createCommand(7, function(program, op, pos1, pos2, outpos) {
   const arg1 = deref(program, op.modes[1], pos1)
   const arg2 = deref(program, op.modes[2], pos2)
+  outpos = offset(program, op.modes[3], outpos)
   program.set(outpos, arg1 < arg2 ? 1 : 0)
 })
 
-createCommand(EQUALS, function(program, op, pos1, pos2, outpos) {
+// EQUALS
+createCommand(8, function(program, op, pos1, pos2, outpos) {
   const arg1 = deref(program, op.modes[1], pos1)
   const arg2 = deref(program, op.modes[2], pos2)
+  outpos = offset(program, op.modes[3], outpos)
   program.set(outpos, arg1 === arg2 ? 1 : 0)
+})
+
+// MOVREL
+createCommand(9, function(program, op, pos1) {
+  const arg1 = deref(program, op.modes[1], pos1)
+  program.offsetRelative(arg1)
 })
 
