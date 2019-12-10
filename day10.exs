@@ -20,10 +20,11 @@ defmodule Roid do
 end
 
 defmodule FlyPath do
-  defstruct vector: nil, directions: nil, distance: nil, ratio: nil, clock: nil
+  defstruct dest: nil, vector: nil, directions: nil, distance: nil, ratio: nil, clock: nil
 
-  def new({vector, directions, distance, ratio, clock}) do
+  def new({dest, vector, directions, distance, ratio, clock}) do
     %__MODULE__{
+      dest: dest,
       vector: vector,
       directions: directions,
       distance: distance,
@@ -49,6 +50,15 @@ defmodule Starmap do
 
   def get(starmap, {x, y} = coords) do
     Map.get(starmap, coords)
+  end
+
+  def size(starmap) do
+    Map.size(starmap)
+  end
+
+  def vaporize(starmap, {x, y} = key) do
+    true = Map.has_key?(starmap, key)
+    Map.delete(starmap, key)
   end
 
   def fetch!(starmap, {x, y} = coords) do
@@ -108,7 +118,7 @@ defmodule Day10 do
              |> Enum.reject(fn n -> Enum.any?(2..(n - 1), &(rem(n, &1) == 0)) end))
 
   def run(str) do
-    start_map =
+    raw_map =
       map =
       str
       |> String.trim()
@@ -117,8 +127,8 @@ defmodule Day10 do
     run_map(map)
   end
 
-  defp run_map(start_map) do
-    map = start_map
+  defp run_map(raw_map, vap_count \\ 0, vap_source \\ nil) do
+    map = raw_map
     {map_max_x, map_max_y} = Starmap.max_coords(map)
 
     map =
@@ -130,8 +140,7 @@ defmodule Day10 do
       map
       |> Starmap.fmap(&count_reach/1)
 
-    print_map(map, map_max_x, map_max_y, :symb)
-    print_map(map, map_max_x, map_max_y, :sreach)
+    # print_map(map, map_max_x, map_max_y, :sreach)
 
     # Starmap.get(map, {3, 4})
 
@@ -145,11 +154,50 @@ defmodule Day10 do
         end
       end)
 
-    print_map_reach(map, best, map_max_x, map_max_y, :symb)
+    vaporize_center =
+      case vap_source do
+        nil -> best.xy
+        {_, _} = other -> other
+      end
 
-    IO.puts("best: #{best.x},#{best.y} => #{best.reach}")
+    print_map_reach(map, vaporize_center, map_max_x, map_max_y, :symb)
 
-    print_map(start_map, map_max_x, map_max_y, :symb)
+    # IO.puts("best: #{best.x},#{best.y} => #{best.reach}")
+
+    to_vaporize =
+      Starmap.get(map, vaporize_center).paths
+      |> Enum.sort_by(fn {xy, roid} -> roid.clock end)
+      |> Enum.map(&elem(&1, 1))
+
+    map_size = Starmap.size(raw_map)
+    raw_map = vaporize_roids(raw_map, to_vaporize, vap_count)
+    new_size = Starmap.size(raw_map)
+
+    if new_size > 1 do
+      run_map(raw_map, vap_count + (map_size - new_size), vaporize_center)
+    else
+      receive do
+        {:vap_200, {x, y}} ->
+          IO.puts("Vaporized 200th: #{100 * x + y}")
+      end
+
+      map
+    end
+  end
+
+  defp vaporize_roids(map, [], _),
+    do: map
+
+  defp vaporize_roids(map, [path | paths], count) do
+    map = Starmap.vaporize(map, path.dest)
+    count = count + 1
+
+    if count == 200 do
+      send(self(), {:vap_200, path.dest})
+      IO.puts("Vaporized #{count}: #{inspect(path.dest)}")
+    end
+
+    vaporize_roids(map, paths, count)
   end
 
   defp count_reach(roid) do
@@ -204,57 +252,51 @@ defmodule Day10 do
     directions = get_directions(vector)
     distance = abs(vx) + abs(vy)
 
+    # The map is big so we will multiply our degrees by a large number
+    coef = 10000
+
     {ratio, clockval} =
       case {vector, directions} do
         # 270 degrees === 9h oclock
         # left
-        {{x, 0}, {-1, :straight}} ->
-          {dx, 270}
+        {{vx, 0}, {-1, :straight}} ->
+          {-1, 270 * coef}
 
         # right
-        {{x, 0}, {1, :straight}} ->
-          {dx, 90}
+        {{vx, 0}, {1, :straight}} ->
+          {1, 90 * coef}
 
         # top
-        {{0, y}, {dx, -1}} ->
-          {dy, 0}
+        {{0, vy}, {:straight, -1}} ->
+          {-1, 0 * coef}
 
         # bottom
-        {{0, y}, {dx, 1}} ->
-          {dy, 180}
+        {{0, vy}, {:straight, 1}} ->
+          {1, 180 * coef}
 
-        {{x, y}, directions} when x != 0 and y != 0 ->
-          # I can't to math in erlang so we will use a simple trick
+        {{vx, vy}, directions} when vx != 0 and vy != 0 ->
           clock =
-            case {dx, dy} do
-              # from 0 to 3 hours
-              {1, -1} when x > 0 and y < 0 ->
-                # increasing y ..0 makes the clock bakcwards so we
-                # subtract its abs value (we add it as it is negative)
-                # 100 * x - abs(y)
-                # increasing 0..x makes the clock turn
-                100 * x + y
-
-              # from 3 to 6 hours
-              {1, 1} when x > 0 and y > 0 ->
-                # increasing x makes the clock tend to 3
-                # increasing y makes the clock tend to 6
-                # so we subtract x
-                10000 * y - 100 * x
-
-              # from 6 to 9 hours
-              {-1, 1} when x < 0 and y > 0 ->
-                -1_000_000 * x - 10000 * y
-
-              {-1, -1} when x < 0 and y < 0 ->
-                -100_000_000 * x - 1_000_000 * y
+            case {abs(vx), abs(vy), directions} do
+              {avx, avy, {1, -1}} when avx < avy -> 45 * coef - avy / avx
+              {sam, sam, {1, -1}} -> 45 * coef
+              {avx, avy, {1, -1}} when avx > avy -> 45 * coef + avx / avy
+              {avx, avy, {1, 1}} when avx > avy -> 135 * coef - avx / avy
+              {sam, sam, {1, 1}} -> 135 * coef
+              {avx, avy, {1, 1}} when avx < avy -> 135 * coef + avy / avx
+              {avx, avy, {-1, 1}} when avx < avy -> 225 * coef - avy / avx
+              {sam, sam, {-1, 1}} -> 225 * coef
+              {avx, avy, {-1, 1}} when avx > avy -> 225 * coef + avx / avy
+              {avx, avy, {-1, -1}} when avx > avy -> 315 * coef - avx / avy
+              {sam, sam, {-1, -1}} -> 315 * coef
+              {avx, avy, {-1, -1}} when avx < avy -> 315 * coef + avy / avx
             end
 
-          ratio = Float.round(abs(x) / abs(y), 5)
+          # I can't to math in erlang so we will use a simple trick
+          ratio = Float.round(abs(vx) / abs(vy), 5)
           {ratio, clock}
       end
 
-    FlyPath.new({vector, directions, distance, ratio, clockval})
+    FlyPath.new({other.xy, vector, directions, distance, ratio, clockval})
   end
 
   defp get_directions({x, y}),
@@ -356,38 +398,39 @@ end
 # .....#.#..
 # """
 
-# """
-# ...###.#########.####
-# .######.###.###.##...
-# ####.########.#####.#
-# ########.####.##.###.
-# ####..#.####.#.#.##..
-# #.################.##
-# ..######.##.##.#####.
-# #.####.#####.###.#.##
-# #####.#########.#####
-# #####.##..##..#.#####
-# ##.######....########
-# .#######.#.#########.
-# .#.##.#.#.#.##.###.##
-# ######...####.#.#.###
-# ###############.#.###
-# #.#####.##..###.##.#.
-# ##..##..###.#.#######
-# #..#..########.#.##..
-# #.#.######.##.##...##
-# .#.##.#####.#..#####.
-# #.#.##########..#.##.
-# """
 """
-.#....#####...#..
-##...##.#####..##
-##...#...#.#####.
-..#.....X...###..
-..#.#.....#....##
+...###.#########.####
+.######.###.###.##...
+####.########.#####.#
+########.####.##.###.
+####..#.####.#.#.##..
+#.################.##
+..######.##.##.#####.
+#.####.#####.###.#.##
+#####.#########.#####
+#####.##..##..#.#####
+##.######....########
+.#######.#.#########.
+.#.##.#.#.#.##.###.##
+######...####.#.#.###
+###############.#.###
+#.#####.##..###.##.#.
+##..##..###.#.#######
+#..#..########.#.##..
+#.#.######.##.##...##
+.#.##.#####.#..#####.
+#.#.##########..#.##.
 """
+# """
+# .#....#####...#..
+# ##...##.#####..##
+# ##...#...#.#####.
+# ..#.....X...###..
+# ..#.#.....#....##
+# """
 |> Day10.run()
-|> IO.inspect()
+
+# |> IO.inspect()
 
 System.halt()
 
