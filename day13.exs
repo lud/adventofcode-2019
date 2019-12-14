@@ -19,7 +19,7 @@ defmodule Day13 do
 
     {:halted, frame} =
       client
-      |> full_first_frame()
+      |> full_first_frame(%{}, self())
 
     fake_score = 9999
     draw_frame(frame, fake_score)
@@ -37,10 +37,12 @@ defmodule Day13 do
 
   def play(str) do
     # set memory address 0 to 2 to activate game loop
+    this = self()
+
     printer =
       spawn_link(fn ->
         receive do
-          {:client, client} -> printer_loop(client)
+          {:client, client} -> printer_loop(client, this)
         end
       end)
 
@@ -53,17 +55,17 @@ defmodule Day13 do
 
     {:ok, client} = Cpu.boot(program)
     send(printer, {:client, client})
-    this = self()
-    spawn_link(fn -> joystick_loop(this) end)
+    # we will automate the joystick
+    # spawn_link(fn -> joystick_loop(this) end)
     game_loop(client, @joy_neutral)
   end
 
-  def printer_loop(client) do
-    {:ok, frame, score} = full_first_frame(client)
-    printer_loop(client, frame, score)
+  def printer_loop(client, parent) do
+    {:ok, frame, score} = full_first_frame(client, %{}, parent)
+    printer_loop(client, frame, score, parent)
   end
 
-  def printer_loop(client, frame, score) do
+  def printer_loop(client, frame, score, parent) do
     {frame, score} =
       case Cpu.get_output(client, 3) do
         {:error, {:halted, {:ok, _}}} ->
@@ -74,22 +76,75 @@ defmodule Day13 do
           {frame, new_score}
 
         {:ok, [x, y, tile_id]} ->
+          send_tile(parent, tile_id, x, y)
           new_frame = Map.put(frame, {x, y}, tile_id)
           {new_frame, score}
       end
 
     draw_frame(frame, score)
-    printer_loop(client, frame, score)
+    printer_loop(client, frame, score, parent)
   end
 
-  def game_loop(client, joystick_val) do
-    joystick_val = read_joystick(joystick_val)
+  defp send_tile(parent, tile_id, x, y) do
+    case tile_id do
+      @ball -> send(parent, {:ball_xy, x, y})
+      @paddle -> send(parent, {:paddle_xy, x, y})
+      _ -> nil
+    end
+  end
+
+  defp full_first_frame(client, frame, parent) do
+    case Cpu.get_output(client, 3) do
+      {:error, {:halted, {:ok, _}}} ->
+        {:halted, frame}
+
+      {:ok, [-1, 0, score]} ->
+        {:ok, frame, score}
+
+      {:ok, [x, y, tile_id]} ->
+        send_tile(parent, tile_id, x, y)
+        frame = Map.put(frame, {x, y}, tile_id)
+        full_first_frame(client, frame, parent)
+    end
+  end
+
+  def game_loop(client, joystick_val, positions \\ {10, 1}) do
+    positions = receive_positions(positions)
+
+    joystick_val =
+      case IO.inspect(positions) do
+        {ball_x, paddle_x} when ball_x < paddle_x -> -1
+        {ball_x, paddle_x} when ball_x > paddle_x -> 1
+        _ -> 0
+      end
+      |> IO.inspect(label: "joystick val")
+
     :ok = Cpu.send_input(client, joystick_val)
-    Process.sleep(500)
+    Process.sleep(10)
 
     if Cpu.alive?(client) do
-      game_loop(client, joystick_val)
+      game_loop(client, joystick_val, positions)
     end
+  end
+
+  defp receive_positions({default_ball_x, default_paddle_x}) do
+    ball_x =
+      receive do
+        {:ball_xy, x, y} -> x
+      after
+        1000 ->
+          default_ball_x
+      end
+
+    paddle_x =
+      receive do
+        {:paddle_xy, x, y} -> x
+      after
+        1000 ->
+          default_paddle_x
+      end
+
+    {ball_x, paddle_x}
   end
 
   def read_joystick(default_val) do
@@ -130,22 +185,6 @@ defmodule Day13 do
     end
   end
 
-  defp full_first_frame(client, frame \\ %{})
-
-  defp full_first_frame(client, frame) do
-    case Cpu.get_output(client, 3) do
-      {:error, {:halted, {:ok, _}}} ->
-        {:halted, frame}
-
-      {:ok, [-1, 0, score]} ->
-        {:ok, frame, score}
-
-      {:ok, [x, y, tile_id]} ->
-        frame = Map.put(frame, {x, y}, tile_id)
-        full_first_frame(client, frame)
-    end
-  end
-
   defp draw_frame(frame, score) do
     {max_x, max_y} = max_coords(frame)
 
@@ -160,7 +199,7 @@ defmodule Day13 do
               @empty -> " "
               @wall -> "|"
               @block -> "#"
-              @paddle -> "="
+              @paddle -> "–"
               @ball -> "O"
             end
           end,
