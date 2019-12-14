@@ -94,6 +94,10 @@ defmodule CpuTest do
 
     {:ok, client} = Cpu.boot(program)
     :ok = Cpu.send_input(client, 1)
-    read_output(client)
+    assert [3_638_931_938] = read_output(client)
+
+    {:ok, client} = Cpu.boot(program)
+    :ok = Cpu.send_input(client, 2)
+    assert [86025] = read_output(client)
   end
 end
