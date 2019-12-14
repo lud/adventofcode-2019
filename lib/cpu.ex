@@ -19,7 +19,6 @@ defmodule Cpu do
         |> Enum.into(%{})
 
       %State{this | memory: memory}
-      |> IO.inspect()
     end
 
     def set_parent(this, parent) when is_pid(parent),
@@ -43,7 +42,6 @@ defmodule Cpu do
     end
 
     def write(%{memory: mem} = this, pos, value) do
-      # IO.puts("write #{value} in #{pos}")
       %State{this | memory: Map.put(mem, pos, value)}
     end
 
@@ -53,7 +51,6 @@ defmodule Cpu do
     defp memread(mem, pos) do
       val = Map.get(mem, pos, 0)
 
-      # IO.puts("read pos #{pos}: #{val}")
       val
     end
 
@@ -84,7 +81,6 @@ defmodule Cpu do
   end
 
   def send_input({:client, pid, _}, val) when is_integer(val) do
-    IO.puts("send input: #{val}")
     send(pid, {:input, val})
     :ok
   end
@@ -124,7 +120,6 @@ defmodule Cpu do
   def read_output(client, acc) do
     case Cpu.get_output(client) do
       {:ok, value} ->
-        IO.puts("output: #{value}")
         read_output(client, [value | acc])
 
       {:error, {:halted, {:ok, _}}} ->
@@ -186,7 +181,6 @@ defmodule Cpu do
   def boot(%State{} = state) do
     {pid, ref} =
       spawn_monitor(fn ->
-        IO.puts("booted")
         loop(state)
       end)
 
@@ -256,11 +250,8 @@ defmodule Cpu do
   defp execute(state, %{op: 3, modes: modes}) do
     {{outpos}, state} = multiread(state, [:offset], modes)
 
-    IO.puts("read input")
-
     receive do
       {:input, val} ->
-        IO.puts("got input: #{val}")
         State.write(state, outpos, val)
     after
       @timeout -> exit({:timeout, :input})
@@ -270,10 +261,6 @@ defmodule Cpu do
   # OUTPUT
   defp execute(state, %{op: 4, modes: modes}) do
     {{value}, state} = multiread(state, [:deref], modes)
-
-    if value == -1 do
-      IO.puts("SEND SCORE")
-    end
 
     send(state.output, {:output, self(), value})
     state

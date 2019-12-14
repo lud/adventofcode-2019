@@ -42,7 +42,9 @@ defmodule Day13 do
     printer =
       spawn_link(fn ->
         receive do
-          {:client, client} -> printer_loop(client, this)
+          {:client, client} ->
+            IO.write(IO.ANSI.clear())
+            ansi_printer_loop(client, this)
         end
       end)
 
@@ -51,13 +53,45 @@ defmodule Day13 do
       |> Cpu.parse_program()
       |> Cpu.transform(fn [_ | ints] -> [2 | ints] end)
       |> Cpu.pipe_output(printer)
-      |> IO.inspect()
 
     {:ok, client} = Cpu.boot(program)
     send(printer, {:client, client})
     # we will automate the joystick
     # spawn_link(fn -> joystick_loop(this) end)
     game_loop(client, @joy_neutral)
+  end
+
+  def ansi_printer_loop(client, parent) do
+    case Cpu.get_output(client, 3) do
+      {:error, {:halted, {:ok, _}}} ->
+        exit({:printer_halt})
+
+      {:ok, [-1, 0, new_score]} ->
+        render_ansi_score(new_score)
+
+      {:ok, [x, y, tile_id]} ->
+        send_tile(parent, tile_id, x, y)
+        render_ansi_tile(x, y, tile_id)
+    end
+
+    ansi_printer_loop(client, parent)
+  end
+
+  def render_ansi_score(score) do
+    [
+      IO.ANSI.cursor(2, 3),
+      "Score: #{score}"
+    ]
+    |> IO.write()
+  end
+
+  def render_ansi_tile(x, y, tile_id) do
+    [
+      # y;x, not x;y
+      IO.ANSI.cursor(y + 3, x + 3),
+      render_tile(tile_id)
+    ]
+    |> IO.write()
   end
 
   def printer_loop(client, parent) do
@@ -70,7 +104,6 @@ defmodule Day13 do
       case Cpu.get_output(client, 3) do
         {:error, {:halted, {:ok, _}}} ->
           exit({:printer_halt})
-          {:halted, frame}
 
         {:ok, [-1, 0, new_score]} ->
           {frame, new_score}
@@ -112,12 +145,11 @@ defmodule Day13 do
     positions = receive_positions(positions)
 
     joystick_val =
-      case IO.inspect(positions) do
+      case positions do
         {ball_x, paddle_x} when ball_x < paddle_x -> -1
         {ball_x, paddle_x} when ball_x > paddle_x -> 1
         _ -> 0
       end
-      |> IO.inspect(label: "joystick val")
 
     :ok = Cpu.send_input(client, joystick_val)
     Process.sleep(10)
@@ -194,14 +226,7 @@ defmodule Day13 do
         [
           "\r",
           for x <- 0..max_x do
-            case Map.get(frame, {x, y}) do
-              nil -> exit({:bad_tile, x, y, frame})
-              @empty -> " "
-              @wall -> "|"
-              @block -> "#"
-              @paddle -> "–"
-              @ball -> "O"
-            end
+            render_tile(Map.get(frame, {x, y}))
           end,
           "\n"
         ]
@@ -211,6 +236,17 @@ defmodule Day13 do
     |> IO.puts()
 
     frame
+  end
+
+  defp render_tile(tile_id) do
+    case tile_id do
+      nil -> exit({:bad_tile, tile_id})
+      @empty -> " "
+      @wall -> "|"
+      @block -> "#"
+      @paddle -> "–"
+      @ball -> "O"
+    end
   end
 
   defp max_coords(frame) do
