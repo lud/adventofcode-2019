@@ -1,4 +1,5 @@
 defmodule Cpu do
+  @timeout 5000
   defmodule State do
     @positional 0
     @immediate 1
@@ -74,26 +75,51 @@ defmodule Cpu do
   def run(program) do
     {:ok, client} = boot(program)
     # sendcom(client, :run)
-    await_halt(client)
+    await(client)
   end
 
-  # defp sendcom({:client, pid, _}, command) do
-  #   send(pid, {:com, command})
-  # end
+  def send_input({:client, pid, _}, val) when is_integer(val) do
+    send(pid, {:input, val})
+    :ok
+  end
 
-  def await_halt({:client, pid, ref}) do
+  def get_output({:client, pid, ref}) do
+    receive do
+      {:output, ^pid, data} ->
+        {:ok, data}
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:error, {:halted, halted_value(reason)}}
+    end
+  end
+
+  def await({:client, pid, ref}) do
     receive do
       {:DOWN, ^ref, :process, ^pid, reason} ->
-        case reason do
-          {:ok, data} ->
-            {:ok, data}
-
-          reason ->
-            IO.warn("Program exited with #{inspect(reason)}")
-            {:error, reason}
-        end
+        halted_value(reason)
     after
-      5000 -> exit(:timeout)
+      @timeout -> exit(:timeout)
+    end
+  end
+
+  defp halted_value(reason) do
+    case reason do
+      {:ok, data} ->
+        {:ok, data}
+
+      :timeout ->
+        exit(:timeout)
+
+      reason ->
+        IO.warn("Program exited with #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  def await!(client) do
+    case await(client) do
+      {:ok, data} -> data
+      {:error, reason} = err -> raise "program crashed: #{inspect(err)}"
     end
   end
 
@@ -151,7 +177,7 @@ defmodule Cpu do
     exit({:ok, State.to_list(state)})
   end
 
-  defp mread(state, actions, modes \\ []) do
+  defp multiread(state, actions, modes \\ []) do
     {rvals, state} =
       actions
       |> Enum.zip(modes)
@@ -165,13 +191,33 @@ defmodule Cpu do
 
   # ADD
   defp execute(state, %{op: 1, modes: modes}) do
-    {{arg1, arg2, outpos}, state} = mread(state, [:deref, :deref, :raw], modes)
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
     State.write(state, outpos, arg1 + arg2)
   end
 
+  # MULT
   defp execute(state, %{op: 2, modes: modes}) do
-    {{arg1, arg2, outpos}, state} = mread(state, [:deref, :deref, :raw], modes)
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
     State.write(state, outpos, arg1 * arg2)
+  end
+
+  # INPUT
+  defp execute(state, %{op: 3, modes: modes}) do
+    {{outpos}, state} = multiread(state, [:raw], modes)
+
+    receive do
+      {:input, val} ->
+        State.write(state, outpos, val)
+    after
+      @timeout -> exit(:timeout)
+    end
+  end
+
+  # OUTPUT
+  defp execute(state, %{op: 4, modes: modes}) do
+    {{value}, state} = multiread(state, [:deref], modes)
+    send(state.parent, {:output, self(), value})
+    state
   end
 
   defp execute(_state, %{op: op}) do
