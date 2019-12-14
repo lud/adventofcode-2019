@@ -12,3 +12,6 @@ day7:
 
 day9:
 	node --experimental-modules day9.mjs
+
+day11:
+	node --experimental-modules day11.mjs
