@@ -23,14 +23,15 @@ defmodule Cpu do
     def set_parent(this, parent) when is_pid(parent),
       do: %State{this | parent: parent}
 
-    def read(%{memory: mem} = this, action \\ :raw) do
+    def read(%{memory: mem} = this, action \\ :raw, mode \\ @positional) do
       pos = cursor(this)
       val = memread(mem, pos)
 
       val =
-        case action do
-          :raw -> val
-          :deref -> memread(mem, val)
+        case {action, mode} do
+          {:raw, 0} -> val
+          {:deref, @positional} -> memread(mem, val)
+          {:deref, @immediate} -> val
         end
 
       this = set_cursor(this, pos + 1)
@@ -38,12 +39,12 @@ defmodule Cpu do
     end
 
     def write(%{memory: mem} = this, pos, value) do
-      IO.puts("write #{value} in #{pos}")
+      # IO.puts("write #{value} in #{pos}")
       %State{this | memory: Map.put(mem, pos, value)}
     end
 
     defp cursor(%{cursor: pos}), do: pos
-    defp set_cursor(this, pos), do: %State{this | cursor: pos}
+    def set_cursor(this, pos), do: %State{this | cursor: pos}
 
     defp memread(mem, pos) do
       val =
@@ -52,7 +53,7 @@ defmodule Cpu do
           0
         end)
 
-      IO.puts("read pos #{pos}: #{val}")
+      # IO.puts("read pos #{pos}: #{val}")
       val
     end
 
@@ -119,7 +120,7 @@ defmodule Cpu do
   def await!(client) do
     case await(client) do
       {:ok, data} -> data
-      {:error, reason} = err -> raise "program crashed: #{inspect(err)}"
+      {:error, _} = err -> raise "program crashed: #{inspect(err)}"
     end
   end
 
@@ -139,8 +140,6 @@ defmodule Cpu do
           |> State.new()
           |> State.set_parent(parent)
 
-        IO.puts("program booting: #{inspect(program)}")
-
         loop(state)
       end)
 
@@ -159,7 +158,7 @@ defmodule Cpu do
     {opcode, state} = State.read(state)
     com = parse_opcode(opcode)
     state = execute(state, com)
-    IO.inspect({opcode, state}, label: "{opcode, state}")
+    # IO.inspect({opcode, state}, label: "{opcode, state}")
     loop(state)
   end
 
@@ -172,21 +171,21 @@ defmodule Cpu do
     %Com{op: Integer.undigits([op1, op2]), modes: [mode1, mode2, mode3]}
   end
 
-  # HALT
-  defp execute(state, %{op: 99}) do
-    exit({:ok, State.to_list(state)})
-  end
-
-  defp multiread(state, actions, modes \\ []) do
+  defp multiread(state, actions, modes) do
     {rvals, state} =
       actions
       |> Enum.zip(modes)
-      |> Enum.reduce({[], state}, fn {action, _mode}, {vals, state} ->
-        {val, state} = State.read(state, action)
+      |> Enum.reduce({[], state}, fn {action, mode}, {vals, state} ->
+        {val, state} = State.read(state, action, mode)
         {[val | vals], state}
       end)
 
     {List.to_tuple(:lists.reverse(rvals)), state}
+  end
+
+  # HALT
+  defp execute(state, %{op: 99}) do
+    exit({:ok, State.to_list(state)})
   end
 
   # ADD
@@ -218,6 +217,42 @@ defmodule Cpu do
     {{value}, state} = multiread(state, [:deref], modes)
     send(state.parent, {:output, self(), value})
     state
+  end
+
+  # JUMP_IF
+  defp execute(state, %{op: 5, modes: modes}) do
+    {{arg1, arg2}, state} = multiread(state, [:deref, :deref], modes)
+
+    if arg1 != 0 do
+      State.set_cursor(state, arg2)
+    else
+      state
+    end
+  end
+
+  # JUMP_IFNOT
+  defp execute(state, %{op: 6, modes: modes}) do
+    {{arg1, arg2}, state} = multiread(state, [:deref, :deref], modes)
+
+    if arg1 == 0 do
+      State.set_cursor(state, arg2)
+    else
+      state
+    end
+  end
+
+  # LESS_THAN
+  defp execute(state, %{op: 7, modes: modes}) do
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
+    val = if(arg1 < arg2, do: 1, else: 0)
+    State.write(state, outpos, val)
+  end
+
+  # EQUALS
+  defp execute(state, %{op: 8, modes: modes}) do
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
+    val = if(arg1 == arg2, do: 1, else: 0)
+    State.write(state, outpos, val)
   end
 
   defp execute(_state, %{op: op}) do
