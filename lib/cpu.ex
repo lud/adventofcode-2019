@@ -5,7 +5,7 @@ defmodule Cpu do
     @immediate 1
     @relative 2
 
-    defstruct parent: nil, memory: [], cursor: 0
+    defstruct parent: nil, memory: [], cursor: 0, offset: 0
 
     def new(memory) when is_list(memory),
       do: reset_memory(%State{}, memory)
@@ -23,15 +23,17 @@ defmodule Cpu do
     def set_parent(this, parent) when is_pid(parent),
       do: %State{this | parent: parent}
 
-    def read(%{memory: mem} = this, action \\ :raw, mode \\ @positional) do
+    def read(%{memory: mem, offset: offset} = this, action \\ :offset, mode \\ @positional) do
       pos = cursor(this)
       val = memread(mem, pos)
 
       val =
         case {action, mode} do
-          {:raw, 0} -> val
+          {:offset, @positional} -> val
+          {:offset, @relative} -> offset + val
           {:deref, @positional} -> memread(mem, val)
           {:deref, @immediate} -> val
+          {:deref, @relative} -> memread(mem, offset + val)
         end
 
       this = set_cursor(this, pos + 1)
@@ -47,14 +49,14 @@ defmodule Cpu do
     def set_cursor(this, pos), do: %State{this | cursor: pos}
 
     defp memread(mem, pos) do
-      val =
-        Map.get_lazy(mem, pos, fn ->
-          IO.puts("Failed to read position #{pos}, return 0")
-          0
-        end)
+      val = Map.get(mem, pos, 0)
 
       # IO.puts("read pos #{pos}: #{val}")
       val
+    end
+
+    def add_offset(%{offset: offset} = this, added) do
+      %State{this | offset: offset + added}
     end
 
     def to_list(%{memory: mem}) do
@@ -80,6 +82,7 @@ defmodule Cpu do
   end
 
   def send_input({:client, pid, _}, val) when is_integer(val) do
+    IO.puts("send input: #{val}")
     send(pid, {:input, val})
     :ok
   end
@@ -107,9 +110,6 @@ defmodule Cpu do
     case reason do
       {:ok, data} ->
         {:ok, data}
-
-      :timeout ->
-        exit(:timeout)
 
       reason ->
         IO.warn("Program exited with #{inspect(reason)}")
@@ -190,25 +190,28 @@ defmodule Cpu do
 
   # ADD
   defp execute(state, %{op: 1, modes: modes}) do
-    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :offset], modes)
     State.write(state, outpos, arg1 + arg2)
   end
 
   # MULT
   defp execute(state, %{op: 2, modes: modes}) do
-    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :offset], modes)
     State.write(state, outpos, arg1 * arg2)
   end
 
   # INPUT
   defp execute(state, %{op: 3, modes: modes}) do
-    {{outpos}, state} = multiread(state, [:raw], modes)
+    {{outpos}, state} = multiread(state, [:offset], modes)
+
+    IO.puts("read input")
 
     receive do
       {:input, val} ->
+        IO.puts("got input: #{val}")
         State.write(state, outpos, val)
     after
-      @timeout -> exit(:timeout)
+      @timeout -> exit({:timeout, :input})
     end
   end
 
@@ -243,16 +246,22 @@ defmodule Cpu do
 
   # LESS_THAN
   defp execute(state, %{op: 7, modes: modes}) do
-    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :offset], modes)
     val = if(arg1 < arg2, do: 1, else: 0)
     State.write(state, outpos, val)
   end
 
   # EQUALS
   defp execute(state, %{op: 8, modes: modes}) do
-    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :raw], modes)
+    {{arg1, arg2, outpos}, state} = multiread(state, [:deref, :deref, :offset], modes)
     val = if(arg1 == arg2, do: 1, else: 0)
     State.write(state, outpos, val)
+  end
+
+  # MOVEREL
+  defp execute(state, %{op: 9, modes: modes}) do
+    {{arg1}, state} = multiread(state, [:deref], modes)
+    State.add_offset(state, arg1)
   end
 
   defp execute(_state, %{op: op}) do

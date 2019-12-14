@@ -85,9 +85,6 @@ runSuite(compareTo8, [
 // runSuite({expected: 0, values: [1,2,3,4,5,6,7,9,10,11]}, '3,9,7,9,10,9,4,9,99,-1,8')
 
 
-console.log(`ok`)
-
-
 const selfCopy = []
 run('109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99', {output: v => {
   selfCopy.push(v)
