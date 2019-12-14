@@ -61,31 +61,11 @@ defmodule CpuTest do
     test_day_5(program, 1001, [9, 10, 11, 12])
   end
 
-  defp read_output(client),
-    do: read_output(client, [])
-
-  defp read_output(client, acc) do
-    case Cpu.get_output(client) do
-      {:ok, value} ->
-        IO.puts("output: #{value}")
-        read_output(client, [value | acc])
-
-      {:error, {:halted, {:ok, _}}} ->
-        :lists.reverse(acc)
-
-      {:error, {:halted, error}} ->
-        error
-
-      other ->
-        exit({:bad_output, other})
-    end
-  end
-
   test "program that copies itself" do
     program = "109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99"
     {:ok, client} = Cpu.boot(program)
     expected = [109, 1, 204, -1, 1001, 100, 1, 100, 1008, 100, 16, 101, 1006, 101, 0, 99]
-    assert expected == read_output(client)
+    assert expected == Cpu.read_output(client)
   end
 
   test "day9 healthcheck" do
@@ -94,10 +74,10 @@ defmodule CpuTest do
 
     {:ok, client} = Cpu.boot(program)
     :ok = Cpu.send_input(client, 1)
-    assert [3_638_931_938] = read_output(client)
+    assert [3_638_931_938] = Cpu.read_output(client)
 
     {:ok, client} = Cpu.boot(program)
     :ok = Cpu.send_input(client, 2)
-    assert [86025] = read_output(client)
+    assert [86025] = Cpu.read_output(client)
   end
 end

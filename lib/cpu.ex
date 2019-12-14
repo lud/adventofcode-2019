@@ -1,11 +1,12 @@
 defmodule Cpu do
+  require IEx
   @timeout 5000
   defmodule State do
     @positional 0
     @immediate 1
     @relative 2
 
-    defstruct parent: nil, memory: [], cursor: 0, offset: 0
+    defstruct parent: nil, memory: nil, cursor: 0, offset: 0, output: nil
 
     def new(memory) when is_list(memory),
       do: reset_memory(%State{}, memory)
@@ -18,6 +19,7 @@ defmodule Cpu do
         |> Enum.into(%{})
 
       %State{this | memory: memory}
+      |> IO.inspect()
     end
 
     def set_parent(this, parent) when is_pid(parent),
@@ -97,12 +99,65 @@ defmodule Cpu do
     end
   end
 
+  def pipe_output(%State{} = state, pid) when is_pid(pid),
+    do: %State{state | output: pid}
+
+  def get_output(client, n),
+    do: get_output(client, n, [])
+
+  defp get_output(client, 0, acc),
+    do: {:ok, :lists.reverse(acc)}
+
+  defp get_output(client, n, acc) do
+    case get_output(client) do
+      {:ok, output} ->
+        get_output(client, n - 1, [output | acc])
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  def read_output(client),
+    do: read_output(client, [])
+
+  def read_output(client, acc) do
+    case Cpu.get_output(client) do
+      {:ok, value} ->
+        IO.puts("output: #{value}")
+        read_output(client, [value | acc])
+
+      {:error, {:halted, {:ok, _}}} ->
+        :lists.reverse(acc)
+
+      {:error, {:halted, error}} ->
+        error
+
+      other ->
+        exit({:bad_output, other})
+    end
+  end
+
+  def alive?({:client, pid, ref}),
+    do: Process.alive?(pid)
+
   def await({:client, pid, ref}) do
-    receive do
-      {:DOWN, ^ref, :process, ^pid, reason} ->
-        halted_value(reason)
-    after
-      @timeout -> exit(:timeout)
+    if Process.alive?(pid) do
+      receive do
+        {:DOWN, ^ref, :process, ^pid, reason} ->
+          halted_value(reason)
+      after
+        @timeout -> exit(:timeout)
+      end
+    else
+      {:error, :noproc}
+    end
+  end
+
+  def await!(client) do
+    case await(client) do
+      {:ok, data} -> data
+      {:error, _} = err -> raise "program crashed: #{inspect(err)}"
     end
   end
 
@@ -117,11 +172,9 @@ defmodule Cpu do
     end
   end
 
-  def await!(client) do
-    case await(client) do
-      {:ok, data} -> data
-      {:error, _} = err -> raise "program crashed: #{inspect(err)}"
-    end
+  def transform(state, fun) do
+    mem = fun.(State.to_list(state))
+    State.reset_memory(state, mem)
   end
 
   def boot(program) when is_binary(program) do
@@ -130,16 +183,10 @@ defmodule Cpu do
     |> boot
   end
 
-  def boot(program) when is_list(program) do
-    parent = self()
-
+  def boot(%State{} = state) do
     {pid, ref} =
       spawn_monitor(fn ->
-        state =
-          program
-          |> State.new()
-          |> State.set_parent(parent)
-
+        IO.puts("booted")
         loop(state)
       end)
 
@@ -147,11 +194,15 @@ defmodule Cpu do
     {:ok, client}
   end
 
-  defp parse_program(str) do
-    str
-    |> String.trim()
-    |> String.split(",")
-    |> Enum.map(&String.to_integer/1)
+  def parse_program(str) do
+    memory =
+      str
+      |> String.trim()
+      |> String.split(",")
+      |> Enum.map(&String.to_integer/1)
+
+    %State{parent: self(), output: self()}
+    |> State.reset_memory(memory)
   end
 
   def loop(state) do
@@ -185,6 +236,7 @@ defmodule Cpu do
 
   # HALT
   defp execute(state, %{op: 99}) do
+    IO.puts("program terminating")
     exit({:ok, State.to_list(state)})
   end
 
@@ -218,7 +270,12 @@ defmodule Cpu do
   # OUTPUT
   defp execute(state, %{op: 4, modes: modes}) do
     {{value}, state} = multiread(state, [:deref], modes)
-    send(state.parent, {:output, self(), value})
+
+    if value == -1 do
+      IO.puts("SEND SCORE")
+    end
+
+    send(state.output, {:output, self(), value})
     state
   end
 
