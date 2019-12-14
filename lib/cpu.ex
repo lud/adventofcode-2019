@@ -142,8 +142,8 @@ defmodule Cpu do
   end
 
   defp parse_opcode(int) when is_integer(int) do
-    [9, mode3, mode2, mode1, op1, op2] = Integer.digits(900_000 + int)
-    %Com{op: Integer.undigits([op1, op2]), modes: [nil, mode1, mode2, mode3]}
+    [9, 0, mode3, mode2, mode1, op1, op2] = Integer.digits(9_000_000 + int)
+    %Com{op: Integer.undigits([op1, op2]), modes: [mode1, mode2, mode3]}
   end
 
   # HALT
@@ -151,12 +151,27 @@ defmodule Cpu do
     exit({:ok, State.to_list(state)})
   end
 
+  defp mread(state, actions, modes \\ []) do
+    {rvals, state} =
+      actions
+      |> Enum.zip(modes)
+      |> Enum.reduce({[], state}, fn {action, _mode}, {vals, state} ->
+        {val, state} = State.read(state, action)
+        {[val | vals], state}
+      end)
+
+    {List.to_tuple(:lists.reverse(rvals)), state}
+  end
+
   # ADD
-  defp execute(state, %{op: 1, modes: _modes}) do
-    {arg1, state} = State.read(state, :deref)
-    {arg2, state} = State.read(state, :deref)
-    {outpos, state} = State.read(state)
+  defp execute(state, %{op: 1, modes: modes}) do
+    {{arg1, arg2, outpos}, state} = mread(state, [:deref, :deref, :raw], modes)
     State.write(state, outpos, arg1 + arg2)
+  end
+
+  defp execute(state, %{op: 2, modes: modes}) do
+    {{arg1, arg2, outpos}, state} = mread(state, [:deref, :deref, :raw], modes)
+    State.write(state, outpos, arg1 * arg2)
   end
 
   defp execute(_state, %{op: op}) do
