@@ -53,52 +53,53 @@ defmodule OreParser do
 end
 
 defmodule OreProd do
-  def produce(_recipes, {qtty, "ORE"}, inventory, coef) do
+  def coef_base(), do: 2
+
+  def produce(_recipes, {qtty, "ORE"}, inventory) do
     # IO.puts("Create #{qtty} ORE")
-    throw(:out_of_ore)
+    IO.puts("try to produce #{qtty} ORE")
+    throw({:out_of_ore, clean_inventory(inventory)})
     # inventory
     # |> Map.update("ORE", qtty, &(&1 + qtty))
     # |> Map.update(:created_ORE, qtty, &(&1 + qtty))
-    IO.puts("collecting #{qtty * coef} ORE")
-    consume_comp(inventory, {qtty * coef, "ORE"})
+    IO.puts("collecting #{qtty} ORE")
+    consume_comp(inventory, {qtty, "ORE"})
   end
 
-  def produce(recipes, {qtty, target}, inventory, coef) do
+  def produce(recipes, {qtty, target}, inventory) do
     # try do
-    do_produce(recipes, {qtty, target}, inventory, coef)
+    do_produce(recipes, {qtty, target}, inventory)
     # catch
     # :out_of_ore -> throw({:out_of_ore, inventory})
     # :out_of_ore -> throw({:out_of_ore, inventory})
     # end
   end
 
-  def do_produce(recipes, {qtty, target}, inventory, coef) do
-    # IO.puts("produce [#{target}] #{qtty * coef}")
+  def do_produce(recipes, {qtty, target}, inventory) do
+    # IO.puts("produce [#{target}] #{qtty}")
     # Check if we have enough components to produce the target
     {qtty_proded, comps} = get_components(recipes, target)
 
     # raise "ici réserver ce qu'on va utiliser pour pas que ça soit pris pas les autres"
 
-    missing_comps = get_missing_comps(inventory, comps, coef)
-    # As long as there are missing comps, we will produce only one of
-    # them, and retry. because if we require comps A and B, and B also
-    # requires A, We could produce A, then B (consuming the A), and
-    # then assume we can produce our target, but the A are no more in
-    # inventory
-    # IO.puts("Producing #{qtty} #{target}, require #{inspect(missing_comps)}")
-    # We produce the missing components
+    missing_comps = get_missing_comps(inventory, comps)
+
     case missing_comps do
       [] ->
         inventory =
           inventory
-          |> consume_comps(mcoef(comps, coef))
-          |> collect_proded(mcoef({qtty_proded, target}, coef))
+          |> consume_comps(comps)
+          |> collect_proded({qtty_proded, target})
 
         missing_target_qtty = qtty - qtty_proded
 
         if missing_target_qtty > 0 do
-          produce(recipes, {missing_target_qtty, target}, inventory, coef)
+          produce(recipes, {missing_target_qtty, target}, inventory)
         else
+          # if missing_target_qtty < 0 do
+          #   IO.puts("produce overhead of #{-1 * missing_target_qtty} #{target}")
+          # end
+
           inventory
         end
 
@@ -107,9 +108,14 @@ defmodule OreProd do
       [{comp_qtty, comp} | _] = list ->
         # IO.puts("require [#{Enum.join(Enum.map(list, fn {_, name} -> name end), ", ")}]")
         # produce 1 comp
-        inventory = produce(recipes, {comp_qtty, comp}, inventory, coef)
+        inventory =
+          list
+          |> Enum.reduce(inventory, fn {comp_qtty, comp}, inventory ->
+            produce(recipes, {comp_qtty, comp}, inventory)
+          end)
+
         # recurse on our target
-        produce(recipes, {qtty, target}, inventory, coef)
+        produce(recipes, {qtty, target}, inventory)
     end
   end
 
@@ -135,23 +141,31 @@ defmodule OreProd do
     data
   end
 
-  def produce_max_fuel(recipes, inventory, coef) do
-    amount = 1
+  defp mcoef_recipes(recipes, coef) do
+    recipes
+    |> Enum.map(fn {k, {qtty, comps}} -> {k, {qtty * coef, mcoef(comps, coef)}} end)
+    |> Enum.into(%{})
+  end
+
+  defp produce_max_fuel(recipes, inventory, coef) do
+    amount = coef
+    coef_recipes = mcoef_recipes(recipes, coef)
 
     try do
-      inventory =
-        produce(recipes, {amount, "FUEL"}, inventory, coef)
-        |> IO.inspect()
+      inventory = produce(coef_recipes, {amount, "FUEL"}, inventory)
 
-      IO.puts("prod passed")
+      # IO.puts("prod passed")
       {:ok, inventory}
     catch
       # {:out_of_ore, inventory} -> {:out_of_ore, inventory}
-      :out_of_ore -> {:out_of_ore, inventory}
+      {:out_of_ore, _some_inventory} -> {:out_of_ore, inventory}
     end
     |> case do
       {:ok, new_inventory} ->
-        IO.puts("Produced #{amount * coef} FUEL, remaining ore: #{Map.get(new_inventory, "ORE")}")
+        IO.puts(
+          "Produced #{coef} FUEL (coef #{coef}), remaining ore: #{Map.get(new_inventory, "ORE")}"
+        )
+
         produce_max_fuel(recipes, new_inventory, coef)
 
       {:out_of_ore, new_inventory} ->
@@ -160,9 +174,9 @@ defmodule OreProd do
             {:ok, new_inventory}
 
           more ->
-            new_coef = div(coef, 2)
+            new_coef = div(coef, coef_base())
             IO.puts("New coef: #{new_coef}")
-            IO.inspect(new_inventory, label: "Inv")
+            # IO.inspect(new_inventory, label: "Inv")
             produce_max_fuel(recipes, new_inventory, new_coef)
         end
     end
@@ -226,17 +240,17 @@ defmodule OreProd do
     Map.get(inv, k, 0) >= value
   end
 
-  defp get_missing_comps(inventory, [{qtty, comp} | comps], coef) do
-    missing_qqty = coef * qtty - Map.get(inventory, comp, 0)
+  defp get_missing_comps(inventory, [{qtty, comp} | comps]) do
+    missing_qqty = qtty - Map.get(inventory, comp, 0)
 
     if missing_qqty > 0 do
-      [{missing_qqty, comp} | get_missing_comps(inventory, comps, coef)]
+      [{missing_qqty, comp} | get_missing_comps(inventory, comps)]
     else
-      get_missing_comps(inventory, comps, coef)
+      get_missing_comps(inventory, comps)
     end
   end
 
-  defp get_missing_comps(_inventory, [], _),
+  defp get_missing_comps(_inventory, []),
     do: []
 
   defp consume_comps(inventory, [{qtty, comp} | comps]) do
@@ -258,15 +272,15 @@ defmodule OreProd do
       new_stock = stock - qtty
 
       if new_stock < 0 do
-        case comp do
-          "ORE" ->
-            throw(:out_of_ore)
+        # case comp do
+        # "ORE" ->
+        # throw(:out_of_ore)
 
-          _ ->
-            IO.puts("Cannot consume #{qtty} #{comp} in #{inspect(inventory)}")
+        # _ ->
+        IO.puts("Cannot consume #{qtty} #{comp} in #{inspect(inventory)}")
 
-            throw({:cannot_consume, {qtty, comp}})
-        end
+        throw({:cannot_consume, {qtty, comp}})
+        # end
       end
 
       # IO.puts([
@@ -353,7 +367,11 @@ ore_1_fuel = 899_155
 target = 1_000_000_000_000
 
 start_coef =
-  (2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2)
+  :math.pow(OreProd.coef_base(), 8)
+  |> trunc()
+
+  # start_coef =
+  #   OreProd.coef_base()
   |> IO.inspect(label: "Start coef")
 
 OreProd.produce_max_fuel!(recipes, %{"ORE" => target}, start_coef)
@@ -361,6 +379,7 @@ OreProd.produce_max_fuel!(recipes, %{"ORE" => target}, start_coef)
 |> Map.get("FUEL")
 |> IO.inspect(label: "Total fuel")
 
+IO.puts("expected: #{82_892_753}")
 # # raise "div trillion by ore, multiply all comps, consume leftovers"
 
 # # OreProd.reverse_prod(recipes, ["FUEL"], [], %{"FUEL" => 1})
