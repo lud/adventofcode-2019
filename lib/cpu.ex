@@ -6,7 +6,7 @@ defmodule Cpu do
     @immediate 1
     @relative 2
 
-    defstruct parent: nil, memory: nil, cursor: 0, offset: 0, output: nil
+    defstruct memory: nil, cursor: 0, offset: 0, halted: false, iostate: nil, io: nil
 
     def new(memory) when is_list(memory),
       do: reset_memory(%State{}, memory)
@@ -20,9 +20,6 @@ defmodule Cpu do
 
       %State{this | memory: memory}
     end
-
-    def set_parent(this, parent) when is_pid(parent),
-      do: %State{this | parent: parent}
 
     def read(%{memory: mem, offset: offset} = this, action \\ :offset, mode \\ @positional) do
       pos = cursor(this)
@@ -49,9 +46,7 @@ defmodule Cpu do
     def set_cursor(this, pos), do: %State{this | cursor: pos}
 
     defp memread(mem, pos) do
-      val = Map.get(mem, pos, 0)
-
-      val
+      Map.get(mem, pos, 0)
     end
 
     def add_offset(%{offset: offset} = this, added) do
@@ -65,141 +60,61 @@ defmodule Cpu do
         memread(mem, i)
       end
     end
+
+    def set_iostate(state, iostate) do
+      %State{state | iostate: iostate}
+    end
   end
 
-  def run!(program) do
-    case run(program) do
+  def run!(intcodes, opts \\ []) do
+    case run(intcodes, opts) do
       {:ok, data} -> data
-      {:error, code} -> raise "Program exited with code #{inspect(code)}"
     end
   end
 
-  def run(program) do
-    {:ok, client} = boot(program)
-    # sendcom(client, :run)
-    await(client)
+  def run(intcodes, opts \\ []) do
+    program =
+      intcodes
+      |> parse_intcodes
+      |> apply_opts(opts)
+      |> loop()
   end
 
-  def send_input({:client, pid, _}, val) when is_integer(val) do
-    send(pid, {:input, val})
-    :ok
+  defp apply_opts(state, opts) do
+    Enum.reduce(opts, state, &apply_opt/2)
   end
 
-  def get_output({:client, pid, ref}) do
-    receive do
-      {:output, ^pid, data} ->
-        {:ok, data}
-
-      {:DOWN, ^ref, :process, ^pid, reason} ->
-        {:error, {:halted, halted_value(reason)}}
-    end
-  end
-
-  def pipe_output(%State{} = state, pid) when is_pid(pid),
-    do: %State{state | output: pid}
-
-  def get_output(client, n),
-    do: get_output(client, n, [])
-
-  defp get_output(client, 0, acc),
-    do: {:ok, :lists.reverse(acc)}
-
-  defp get_output(client, n, acc) do
-    case get_output(client) do
-      {:ok, output} ->
-        get_output(client, n - 1, [output | acc])
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  def read_output(client),
-    do: read_output(client, [])
-
-  def read_output(client, acc) do
-    case Cpu.get_output(client) do
-      {:ok, value} ->
-        read_output(client, [value | acc])
-
-      {:error, {:halted, {:ok, _}}} ->
-        :lists.reverse(acc)
-
-      {:error, {:halted, error}} ->
-        error
-
-      other ->
-        exit({:bad_output, other})
-    end
-  end
-
-  def alive?({:client, pid, ref}),
-    do: Process.alive?(pid)
-
-  def await({:client, pid, ref}) do
-    if Process.alive?(pid) do
-      receive do
-        {:DOWN, ^ref, :process, ^pid, reason} ->
-          halted_value(reason)
-      after
-        @timeout -> exit(:timeout)
-      end
-    else
-      {:error, :noproc}
-    end
-  end
-
-  def await!(client) do
-    case await(client) do
-      {:ok, data} -> data
-      {:error, _} = err -> raise "program crashed: #{inspect(err)}"
-    end
-  end
-
-  defp halted_value(reason) do
-    case reason do
-      {:ok, data} ->
-        {:ok, data}
-
-      reason ->
-        IO.warn("Program exited with #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  def transform(state, fun) do
+  defp apply_opt({:transform, fun}, %State{memory: mem} = state) when is_function(fun, 1) do
     mem = fun.(State.to_list(state))
     State.reset_memory(state, mem)
   end
 
-  def boot(program) when is_binary(program) do
-    program
-    |> parse_program
-    |> boot
+  defp apply_opt({:io, fun}, state) when is_function(fun, 1) do
+    %State{state | io: fun}
   end
 
-  def boot(%State{} = state) do
-    {pid, ref} =
-      spawn_monitor(fn ->
-        loop(state)
-      end)
-
-    client = {:client, pid, ref}
-    {:ok, client}
+  defp apply_opt({:iostate, value}, state) do
+    %State{state | iostate: value}
   end
 
-  def parse_program(str) do
+  defp apply_opt(opt, _) do
+    raise "Unknown option: #{inspect(opt)}"
+  end
+
+  defp parse_intcodes(str) do
     memory =
       str
       |> String.trim()
       |> String.split(",")
       |> Enum.map(&String.to_integer/1)
 
-    %State{parent: self(), output: self()}
-    |> State.reset_memory(memory)
+    State.new(memory)
   end
 
-  def loop(state) do
+  defp loop(%{halted: true} = state),
+    do: {:ok, state}
+
+  defp loop(state) do
     {opcode, state} = State.read(state)
     com = parse_opcode(opcode)
     state = execute(state, com)
@@ -212,7 +127,7 @@ defmodule Cpu do
   end
 
   defp parse_opcode(int) when is_integer(int) do
-    [9, 0, mode3, mode2, mode1, op1, op2] = Integer.digits(9_000_000 + int)
+    [9, mode3, mode2, mode1, op1, op2] = Integer.digits(900_000 + int)
     %Com{op: Integer.undigits([op1, op2]), modes: [mode1, mode2, mode3]}
   end
 
@@ -231,7 +146,7 @@ defmodule Cpu do
   # HALT
   defp execute(state, %{op: 99}) do
     IO.puts("program terminating")
-    exit({:ok, State.to_list(state)})
+    %State{state | halted: true}
   end
 
   # ADD
@@ -249,21 +164,18 @@ defmodule Cpu do
   # INPUT
   defp execute(state, %{op: 3, modes: modes}) do
     {{outpos}, state} = multiread(state, [:offset], modes)
+    {val, iostate} = state.io.({:input, state.iostate})
 
-    receive do
-      {:input, val} ->
-        State.write(state, outpos, val)
-    after
-      @timeout -> exit({:timeout, :input})
-    end
+    state
+    |> State.write(outpos, val)
+    |> State.set_iostate(iostate)
   end
 
   # OUTPUT
   defp execute(state, %{op: 4, modes: modes}) do
     {{value}, state} = multiread(state, [:deref], modes)
-
-    send(state.output, {:output, self(), value})
-    state
+    iostate = state.io.({:output, value, state.iostate})
+    State.set_iostate(state, iostate)
   end
 
   # JUMP_IF
