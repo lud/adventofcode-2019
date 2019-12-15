@@ -57,7 +57,6 @@ defmodule OreProd do
 
   def produce(_recipes, {qtty, "ORE"}, inventory) do
     # IO.puts("Create #{qtty} ORE")
-    IO.puts("try to produce #{qtty} ORE")
     throw({:out_of_ore, clean_inventory(inventory)})
     # inventory
     # |> Map.update("ORE", qtty, &(&1 + qtty))
@@ -147,6 +146,29 @@ defmodule OreProd do
     |> Enum.into(%{})
   end
 
+  defp consume_leftovers(recipes, inventory) do
+    # produce as much fuel a possible without using ORE
+    ore = Map.get(inventory, "ORE", 0)
+    no_ore_inventory = Map.put(inventory, "ORE", 0)
+    no_ore_inventory = produce_with_leftovers(recipes, no_ore_inventory)
+    Map.put(no_ore_inventory, "ORE", ore)
+  end
+
+  defp produce_with_leftovers(recipes, inventory) do
+    try do
+      {:ok, produce(recipes, {1, "FUEL"}, inventory)}
+    catch
+      {:out_of_ore, _} -> {:error, :out_of_ore}
+    end
+    |> case do
+      {:ok, inventory} ->
+        produce_with_leftovers(recipes, inventory)
+
+      {:error, :out_of_ore} ->
+        inventory
+    end
+  end
+
   defp produce_max_fuel(recipes, inventory, coef) do
     amount = coef
     coef_recipes = mcoef_recipes(recipes, coef)
@@ -154,6 +176,16 @@ defmodule OreProd do
     try do
       inventory = produce(coef_recipes, {amount, "FUEL"}, inventory)
 
+      inventory =
+        case coef do
+          1 ->
+            inventory
+
+          _ ->
+            consume_leftovers(mcoef_recipes(recipes, div(coef, coef_base())), inventory)
+        end
+
+      # inventory = consume_leftovers(recipes, inventory)
       # IO.puts("prod passed")
       {:ok, inventory}
     catch
@@ -367,19 +399,29 @@ ore_1_fuel = 899_155
 target = 1_000_000_000_000
 
 start_coef =
-  :math.pow(OreProd.coef_base(), 8)
+  :math.pow(OreProd.coef_base(), 10)
   |> trunc()
 
   # start_coef =
   #   OreProd.coef_base()
   |> IO.inspect(label: "Start coef")
 
-OreProd.produce_max_fuel!(recipes, %{"ORE" => target}, start_coef)
+keep_ore = 10_000_000_000
+inventory = OreProd.produce_max_fuel!(recipes, %{"ORE" => target - keep_ore}, start_coef)
+
+inventory =
+  inventory
+  |> OreProd.collect_proded({keep_ore, "ORE"})
+  |> IO.inspect(label: "Added #{keep_ore} ORE")
+
+OreProd.produce_max_fuel!(recipes, inventory, 1)
 |> IO.inspect(label: "Final inventory")
 |> Map.get("FUEL")
 |> IO.inspect(label: "Total fuel")
 
-IO.puts("expected: #{82_892_753}")
+2_390_226
+|> IO.inspect(label: "Old val   ")
+
 # # raise "div trillion by ore, multiply all comps, consume leftovers"
 
 # # OreProd.reverse_prod(recipes, ["FUEL"], [], %{"FUEL" => 1})
