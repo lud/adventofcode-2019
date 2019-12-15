@@ -66,13 +66,13 @@ defmodule Cpu do
     end
   end
 
-  def run!(intcodes, opts \\ []) do
+  def run!(intcodes, opts \\ []) when is_binary(intcodes) do
     case run(intcodes, opts) do
       {:ok, data} -> data
     end
   end
 
-  def run(intcodes, opts \\ []) do
+  def run(intcodes, opts \\ []) when is_binary(intcodes) do
     program =
       intcodes
       |> parse_intcodes

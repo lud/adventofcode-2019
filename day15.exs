@@ -3,6 +3,7 @@ defmodule Day15 do
   @wall 0
   @empty 1
   @system 2
+  @oxygen 3
 
   @north 1
   @south 2
@@ -13,8 +14,8 @@ defmodule Day15 do
 
   def init() do
     map = set_map(empty_map(), @init_coords, @empty)
-
-    %{xy: @init_coords, map: map, move_attempt: nil}
+    # print_map(map, @init_coords)
+    %{xy: @init_coords, map: map, move_attempt: nil, track: []}
   end
 
   defp read_input(prompt \\ "move > ") do
@@ -28,18 +29,20 @@ defmodule Day15 do
   end
 
   def io({:input, state}) do
-    print_map(state.map, state.xy)
+    # print_map(state.map, state.xy)
+    # Process.sleep(100)
 
-    direction =
-      case get_unknown_neighbour(state) do
-        {:ok, direction} ->
-          direction
+    case get_unknown_neighbour(state) do
+      {:ok, direction} ->
+        {direction, %{state | move_attempt: direction}}
 
-        :error ->
-          read_input()
-      end
-
-    {direction, %{state | move_attempt: direction}}
+      :error ->
+        {_direction, _state} = backtrack(state)
+        # IO.ANSI.clear() |> IO.write()
+        # IO.inspect(state.track)
+        # exit(:ok)
+        # read_input()
+    end
   end
 
   def io({:output, @wall, state}) do
@@ -50,12 +53,17 @@ defmodule Day15 do
     |> no_attempt
   end
 
-  def io({:output, @empty, state}) do
+  def io({:output, type, state}) when type in [@empty, @system] do
+    # draw the old position of the droid as empty. @todo check if it
+    # oxygen system
     state = finish_move(state)
-    wall_coords = attempted_coords(state)
+
+    if type == @system do
+      send(self(), {:found, state.track})
+    end
 
     state
-    |> set_map(state.xy, @empty)
+    |> set_map(state.xy, type)
     |> no_attempt
   end
 
@@ -63,14 +71,43 @@ defmodule Day15 do
     raise "Unhandled io #{inspect(other)}"
   end
 
-  defp finish_move(state) do
+  defp finish_move(%{move_attempt: {:backtrack, direction}} = state) do
     new_coords = attempted_coords(state)
     state = %{state | xy: new_coords}
   end
 
-  defp attempted_coords(%{xy: xy, move_attempt: attempt}) do
-    move_coords(xy, attempt)
+  defp finish_move(state) do
+    new_coords = attempted_coords(state)
+    track = [state.move_attempt | state.track]
+    state = %{state | xy: new_coords, track: track}
   end
+
+  defp attempted_coords(%{xy: xy, move_attempt: {:backtrack, direction}}) do
+    move_coords(xy, direction)
+  end
+
+  defp attempted_coords(%{xy: xy, move_attempt: direction}) do
+    move_coords(xy, direction)
+  end
+
+  defp backtrack(%{track: []} = state) do
+    print_map(state.map, state.xy)
+    throw({:finished, state})
+  end
+
+  defp backtrack(%{track: [direction | track]} = state) do
+    direction = reverse_direction(direction)
+
+    {
+      direction,
+      %{state | track: track, move_attempt: {:backtrack, direction}}
+    }
+  end
+
+  defp reverse_direction(@north), do: @south
+  defp reverse_direction(@south), do: @north
+  defp reverse_direction(@east), do: @west
+  defp reverse_direction(@west), do: @east
 
   defp move_coords({x, y}, @north), do: {x, y - 1}
   defp move_coords({x, y}, @south), do: {x, y + 1}
@@ -96,17 +133,21 @@ defmodule Day15 do
   defp neighbour?({x, y}, {x2, y}) when abs(x - x2) == 1, do: true
   defp neighbour?(_, _), do: false
 
-  defp get_direction({from_x, from_y}, {from_x, new_y}) when new_y < from_y,
-    do: @north
+  defp get_direction({from_x, from_y}, {from_x, new_y})
+       when new_y < from_y,
+       do: @north
 
-  defp get_direction({from_x, from_y}, {from_x, new_y}) when new_y > from_y,
-    do: @south
+  defp get_direction({from_x, from_y}, {from_x, new_y})
+       when new_y > from_y,
+       do: @south
 
-  defp get_direction({from_x, from_y}, {new_x, from_y}) when new_x < from_x,
-    do: @west
+  defp get_direction({from_x, from_y}, {new_x, from_y})
+       when new_x < from_x,
+       do: @west
 
-  defp get_direction({from_x, from_y}, {new_x, from_y}) when new_x > from_x,
-    do: @east
+  defp get_direction({from_x, from_y}, {new_x, from_y})
+       when new_x > from_x,
+       do: @east
 
   defp empty_map() do
     %{}
@@ -116,6 +157,9 @@ defmodule Day15 do
     map = set_map(map, coords, type)
     %{state | map: map}
   end
+
+  defp set_map(map, coords, @oxygen),
+    do: Map.put(map, coords, @oxygen)
 
   defp set_map(map, coords, @unknown),
     do: Map.put(map, coords, @unknown)
@@ -152,43 +196,96 @@ defmodule Day15 do
     %{state | move_attempt: nil}
   end
 
-  defp print_map(map, droid) do
-    {min_x, min_y} = min_coords(map)
-
-    offset = {abs(min(min_x, 0)), abs(min(min_y, 0))}
-
-    map_offset =
-      Enum.map(map, fn {xy, v} -> {offset_xy(xy, offset), v} end)
-      |> Enum.into(%{})
-
-    draw_map(map_offset, offset_xy(droid, offset))
+  defp print_map(map, droid \\ nil) do
+    draw_map(map, droid)
+    {:ok, :printed}
   end
 
-  defp draw_map(map, droid) do
-    {max_x, max_y} = max_coords(map)
+  def run_oxygen(map) do
+    {coords, @system} =
+      Enum.find(map, fn
+        {_, @system} -> true
+        _ -> false
+      end)
 
-    for y <- 0..max_y do
-      [
-        "\r",
-        for x <- 0..max_x do
-          case {x, y} do
-            ^droid -> render_tile(:droid)
-            _ -> render_tile(Map.get(map, {x, y}))
-          end
-        end,
-        "\n"
-      ]
+    map = set_map(map, coords, @oxygen)
+
+    print_map(map)
+
+    fringe =
+      [coords]
+      |> IO.inspect()
+
+    run_oxygen(map, fringe, 0)
+  end
+
+  defp run_oxygen(map, [], count) do
+    print_map(map)
+    {:filled, count}
+  end
+
+  defp run_oxygen(map, fringe, count) do
+    new_fringe =
+      fringe
+      |> Enum.flat_map(&get_empty_neighbours(&1, map))
+
+    map = Enum.reduce(new_fringe, map, fn coords, map -> set_map(map, coords, @oxygen) end)
+
+    new_fringe
+    |> Enum.each(&draw_tile(&1, @oxygen))
+
+    Process.sleep(10)
+
+    case new_fringe do
+      [] ->
+        [IO.ANSI.cursor(45, 0), "Done\n"] |> IO.write()
+        {:filled, count}
+
+      _ ->
+        run_oxygen(map, new_fringe, count + 1)
     end
-    |> IO.puts()
+  end
 
-    map
+  defp get_empty_neighbours(coords, map) do
+    coords
+    |> cardinal_neighbors
+    |> Enum.filter(&(Map.get(map, &1) == @empty))
+  end
+
+  defp draw_map(map, droid \\ nil) do
+    {min_x, min_y} = min_coords(map)
+    {max_x, max_y} = max_coords(map)
+    offset = {abs(min(min_x, 0)) + 2, abs(min(min_y, 0)) + 2}
+    Process.put(:draw_offset, offset)
+    IO.write(IO.ANSI.clear())
+
+    for y <- min_y..max_y do
+      for x <- min_x..max_x do
+        draw_tile({x, y}, Map.get(map, {x, y}))
+      end
+    end
+
+    if droid != nil do
+      draw_tile(droid, :droid)
+    end
+  end
+
+  defp draw_tile({x, y}, tile) do
+    {offset_x, offset_y} = Process.get(:draw_offset, {0, 0})
+
+    [
+      IO.ANSI.cursor(y + offset_y, x + offset_x),
+      render_tile(tile)
+    ]
+    |> IO.write()
   end
 
   defp render_tile(@unknown), do: [IO.ANSI.light_blue(), "?", IO.ANSI.reset()]
-  defp render_tile(@wall), do: [IO.ANSI.light_red(), "#", IO.ANSI.reset()]
-  defp render_tile(@system), do: "S"
+  defp render_tile(@wall), do: [IO.ANSI.framed(), "𐌎", IO.ANSI.reset()]
+  defp render_tile(@system), do: [IO.ANSI.green_background(), "S", IO.ANSI.reset()]
   defp render_tile(@empty), do: "."
-  defp render_tile(:droid), do: "D"
+  defp render_tile(:droid), do: [IO.ANSI.yellow(), "D", IO.ANSI.reset()]
+  defp render_tile(@oxygen), do: [IO.ANSI.light_cyan(), "⧂", IO.ANSI.reset()]
   defp render_tile(nil), do: " "
 
   defp offset_xy({x, y}, {ax, ay}) do
@@ -212,7 +309,22 @@ defmodule Day15 do
   end
 end
 
-program =
-  "day15.puzzle"
-  |> File.read!()
-  |> Cpu.run(io: &Day15.io/1, iostate: Day15.init())
+program = File.read!("day15.puzzle")
+
+map =
+  try do
+    Cpu.run(program, io: &Day15.io/1, iostate: Day15.init())
+  catch
+    {:finished, state} ->
+      [IO.ANSI.cursor(45, 0), "Done\n"] |> IO.write()
+
+      receive do
+        {:found, track} ->
+          Process.sleep(1)
+          IO.puts("path length: #{length(track)}")
+          state.map
+      end
+  end
+
+Day15.run_oxygen(map)
+|> IO.inspect()
