@@ -29,8 +29,7 @@ defmodule Day15 do
   end
 
   def io({:input, state}) do
-    # print_map(state.map, state.xy)
-    # Process.sleep(100)
+    print_map(state.map, state.xy)
 
     case get_unknown_neighbour(state) do
       {:ok, direction} ->
@@ -256,8 +255,11 @@ defmodule Day15 do
     {min_x, min_y} = min_coords(map)
     {max_x, max_y} = max_coords(map)
     offset = {abs(min(min_x, 0)) + 2, abs(min(min_y, 0)) + 2}
-    Process.put(:draw_offset, offset)
-    IO.write(IO.ANSI.clear())
+    old_offset = Process.put(:draw_offset, offset)
+
+    if old_offset != offset do
+      IO.write(IO.ANSI.clear())
+    end
 
     for y <- min_y..max_y do
       for x <- min_x..max_x do
@@ -281,11 +283,11 @@ defmodule Day15 do
   end
 
   defp render_tile(@unknown), do: [IO.ANSI.light_blue(), "?", IO.ANSI.reset()]
-  defp render_tile(@wall), do: [IO.ANSI.framed(), "𐌎", IO.ANSI.reset()]
+  defp render_tile(@wall), do: [IO.ANSI.yellow(), "■", IO.ANSI.reset()]
   defp render_tile(@system), do: [IO.ANSI.green_background(), "S", IO.ANSI.reset()]
-  defp render_tile(@empty), do: "."
-  defp render_tile(:droid), do: [IO.ANSI.yellow(), "D", IO.ANSI.reset()]
-  defp render_tile(@oxygen), do: [IO.ANSI.light_cyan(), "⧂", IO.ANSI.reset()]
+  defp render_tile(@empty), do: " "
+  defp render_tile(:droid), do: "X"
+  defp render_tile(@oxygen), do: [IO.ANSI.blue_background(), "~", IO.ANSI.reset()]
   defp render_tile(nil), do: " "
 
   defp offset_xy({x, y}, {ax, ay}) do
@@ -320,7 +322,6 @@ map =
 
       receive do
         {:found, track} ->
-          Process.sleep(1)
           IO.puts("path length: #{length(track)}")
           state.map
       end
