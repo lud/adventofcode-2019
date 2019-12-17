@@ -1,12 +1,4 @@
 defmodule Day17 do
-  def iostate() do
-    []
-  end
-
-  def io({:output, value, state}) do
-    [value | state]
-  end
-
   @newline 10
   @scaffold ?#
   @robot_up ?^
@@ -17,7 +9,7 @@ defmodule Day17 do
   @robot_tumbling ?X
   @robot_scaffold [@robot_up, @robot_down, @robot_left, @robot_right]
   @max_coords {45, 35}
-
+  @start_io_x 10
   defguard is_scaffold(val) when val in @robot_scaffold or val == @scaffold
   defp scaffold?(val) when is_scaffold(val), do: true
   defp scaffold?(val), do: false
@@ -103,7 +95,7 @@ defmodule Day17 do
   def run(puzzle) do
     output =
       puzzle
-      |> Cpu.run!(io: &Day17.io/1, iostate: Day17.iostate())
+      |> Cpu.run!(io: fn {:output, value, state} -> [value | state] end, iostate: [])
       |> Map.get(:iostate)
       |> :lists.reverse()
 
@@ -135,7 +127,97 @@ defmodule Day17 do
     |> Enum.map(&alignment_param/1)
     |> Enum.sum()
     |> IO.inspect(label: "Aligment sum")
+
+    # mov_A = "L,4,L,4,L,6\n"
+    # mov_B = "R,10,L,6\n"
+    # mov_C = "L,12,L,6,R,10\n"
+    # mov_routine = "A,B,A,B,C,A\n"
+
+    mov_A = "L,4,L,4,L,6,R,10,L,6\n"
+    mov_B = "L,12,L,6,R,10,L,6\n"
+    mov_C = "R,8,R,10,L,6\n"
+    # mov_routine = "A,B,A,B,C\n"
+    mov_routine = "A,A,B,C,C,A,C,B,C,B\n"
+
+    paths = [mov_routine, mov_A, mov_B, mov_C] |> Enum.map(&to_charlist/1) |> Enum.concat()
+    state = %{paths: paths, out: [], prev_out: output, feed: [?y]}
+    IO.write("\n")
+    IO.write([IO.ANSI.clear()])
+
+    puzzle
+    |> Cpu.run!(
+      transform: fn [1 | rest] -> [2 | rest] end,
+      io: fn
+        {:input, %{paths: [char | chars]} = state} ->
+          {char, %{state | paths: chars}}
+
+        {:input, %{paths: [], feed: [yesno]} = state} ->
+          {yesno, %{state | feed: []}}
+
+        {:input, %{paths: [], feed: []}} ->
+          {?\n, state}
+
+        {:output, v, state} when v > ?z ->
+          IO.write([IO.ANSI.cursor(50, 0), "final output: #{v}\n"])
+          state
+
+        {:output, 10, state} ->
+          state =
+            case Process.put(:previous, 10) do
+              10 ->
+                %{out: out} = state
+
+                out = :lists.reverse(out)
+
+                prev_out =
+                  if length(out) != 0 do
+                    print_out(out, state.prev_out, y = 2, x = @start_io_x)
+                    # Process.sleep(100)
+                    out
+                  else
+                    state.prev_out
+                  end
+
+                %{state | out: [], prev_out: prev_out}
+
+              _ ->
+                %{out: out} = state
+
+                %{state | out: [10 | out]}
+            end
+
+          IO.write([10])
+          state
+
+        {:output, val, state} ->
+          %{out: out} = state
+          Process.put(:previous, val)
+          %{state | out: [val | out]}
+      end,
+      iostate: state
+    )
   end
+
+  defp print_out(out, _, y, x) do
+    IO.write([IO.ANSI.cursor(0, 0), out])
+    IO.write([IO.ANSI.cursor(0, 0), IO.ANSI.reset()])
+  end
+
+  # defp print_out([10 | out], [10 | prev], y, x),
+  #   do: print_out(out, prev, y + 1, @start_io_x)
+
+  # defp print_out([diff | out], [old | prev], y, x) do
+  #   IO.write([IO.ANSI.cursor(y, x), diff])
+  #   print_out(out, prev, y, x + 1)
+  # end
+
+  # defp print_out([same | out], [same | prev], y, x) do
+  #   print_out(out, prev, y, x + 1)
+  # end
+
+  # defp print_out([], _, _, _) do
+  #   IO.write([IO.ANSI.cursor(50, 2), IO.ANSI.reset()])
+  # end
 end
 
 puzzle =

@@ -145,7 +145,6 @@ defmodule Cpu do
 
   # HALT
   defp execute(state, %{op: 99}) do
-    IO.puts("program terminating")
     %State{state | halted: true}
   end
 
