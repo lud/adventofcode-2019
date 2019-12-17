@@ -108,11 +108,6 @@ defmodule Day15 do
   defp reverse_direction(@east), do: @west
   defp reverse_direction(@west), do: @east
 
-  defp move_coords({x, y}, @north), do: {x, y - 1}
-  defp move_coords({x, y}, @south), do: {x, y + 1}
-  defp move_coords({x, y}, @east), do: {x + 1, y}
-  defp move_coords({x, y}, @west), do: {x - 1, y}
-
   defp get_unknown_neighbour(state) do
     xy = state.xy
 
@@ -181,6 +176,11 @@ defmodule Day15 do
       set_map(map, coords, type)
     end
   end
+
+  defp move_coords({x, y}, @north), do: {x, y - 1}
+  defp move_coords({x, y}, @south), do: {x, y + 1}
+  defp move_coords({x, y}, @east), do: {x + 1, y}
+  defp move_coords({x, y}, @west), do: {x - 1, y}
 
   defp cardinal_neighbors({_, _} = coords) do
     [

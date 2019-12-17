@@ -5,6 +5,7 @@ defmodule Day16 do
     input
     |> String.to_integer()
     |> Integer.digits()
+    # |> IO.inspect(label: "start   ")
     |> compute_signal(count)
   end
 
@@ -15,7 +16,8 @@ defmodule Day16 do
 
   def compute_signal(input, count) do
     phase = compute_phase(input)
-    IO.puts("phase #{count}: #{inspect(phase)}")
+
+    # IO.puts("phase #{count}: #{inspect(phase)}")
     compute_signal(phase, count - 1)
   end
 
@@ -42,9 +44,13 @@ defmodule Day16 do
         digit * mult
       end)
       |> Enum.sum()
-      |> Integer.digits()
-      |> List.last()
+      |> rem(10)
       |> abs()
+
+    # |> Enum.sum()
+    # |> Integer.digits()
+    # |> List.last()
+    # |> abs()
 
     # IO.puts("digit computed: #{result}")
     result
@@ -79,15 +85,29 @@ defmodule Day16 do
   end
 end
 
+puzzle = "12345678"
+
 # "59772698208671263608240764571860866740121164692713197043172876418614411671204569068438371694198033241854293277505547521082227127768000396875825588514931816469636073669086528579846568167984238468847424310692809356588283194938312247006770713872391449523616600709476337381408155057994717671310487116607321731472193054148383351831456193884046899113727301389297433553956552888308567897333657138353770191097676986516493304731239036959591922009371079393026332649558536888902303554797360691183681625604439250088062481052510016157472847289467410561025668637527408406615316940050060474260802000437356279910335624476330375485351373298491579364732029523664108987"
-# "80871224585914546619083218645595"
-"12345678"
-|> Day16.compute_signal(1)
-|> IO.inspect()
+# puzzle = "80871224585914546619083218645595"
+# IO.puts("48226158 ?")
+
+results =
+  0..10
+  |> Stream.map(fn n ->
+    {n, puzzle |> Day16.compute_signal(n)}
+  end)
+  |> Stream.map(fn {n, result} ->
+    IO.puts(
+      "#{String.pad_leading(to_string(n), 10)}: #{String.pad_leading(to_string(result), 8, "0")}"
+    )
+  end)
+  |> Stream.run()
+
+# "12345678"
+# |> Day16.compute_signal(9999)
 
 # IO.puts("24176176… ?")
 # IO.puts("24176176… ?")
-IO.puts("48226158 ?")
 # IO.puts("68764632…")
 
 System.halt()
