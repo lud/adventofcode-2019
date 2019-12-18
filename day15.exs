@@ -165,7 +165,7 @@ defmodule Day15 do
     map = Map.put(map, coords, type)
 
     coords
-    |> cardinal_neighbors()
+    |> cardinal_neighbours()
     |> Enum.reduce(map, &set_map_new(&2, &1, @unknown))
   end
 
@@ -182,7 +182,7 @@ defmodule Day15 do
   defp move_coords({x, y}, @east), do: {x + 1, y}
   defp move_coords({x, y}, @west), do: {x - 1, y}
 
-  defp cardinal_neighbors({_, _} = coords) do
+  defp cardinal_neighbours({_, _} = coords) do
     [
       move_coords(coords, @north),
       move_coords(coords, @south),
@@ -247,7 +247,7 @@ defmodule Day15 do
 
   defp get_empty_neighbours(coords, map) do
     coords
-    |> cardinal_neighbors
+    |> cardinal_neighbours
     |> Enum.filter(&(Map.get(map, &1) == @empty))
   end
 

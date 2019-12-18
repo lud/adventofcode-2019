@@ -67,7 +67,7 @@ defmodule Day17 do
   defp move_coords({x, y}, :right), do: {x + 1, y}
   defp move_coords({x, y}, :left), do: {x - 1, y}
 
-  defp cardinal_neighbors({_, _} = coords) do
+  defp cardinal_neighbours({_, _} = coords) do
     [
       move_coords(coords, :up),
       move_coords(coords, :down),
@@ -85,7 +85,7 @@ defmodule Day17 do
     |> Enum.map(fn {xy, _} -> xy end)
     |> Enum.filter(fn xy ->
       xy
-      |> cardinal_neighbors()
+      |> cardinal_neighbours()
       |> Enum.all?(fn n_xy -> scaffold?(Map.get(map, n_xy)) end)
     end)
   end
