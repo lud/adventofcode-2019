@@ -180,7 +180,7 @@ defmodule Day18 do
   defp walk_to_all_keys(%GridMap{} = map) do
     %{state: state} = map
     %{pos: pos, steps: steps} = state
-    indent = String.duplicate("  ", length(state.trace))
+    indent = String.duplicate("  ", length(state.ckeys))
 
     # Check if this state has already been reached by another
     # simulation. It is possible because we can walk over a key an
@@ -188,11 +188,12 @@ defmodule Day18 do
 
     # IO.puts("#{inspect({:steps, :lists.reverse(state.ckeys)})} => #{steps}")
 
-    pkey = {:steps, Enum.sort(state.ckeys)}
+    sorted = Enum.sort(state.ckeys)
+    pkey = {:steps, sorted}
 
     case Process.get(pkey) do
       better when better <= steps ->
-        IO.puts("Abandon seen state, better concurrent for #{state.ckeys}")
+        IO.puts("Abandon seen state, better concurrent for #{format_keys(sorted)}")
         []
 
       _ ->
@@ -221,11 +222,11 @@ defmodule Day18 do
             |> Enum.reduce([], fn {coords, key}, maps ->
               # IO.puts("-- Go next key #{format_keys(state.ckeys)} -> #{[key]}")
 
-              map =
-                GridMap.update_state(map, fn state ->
-                  # @todo remove trace as we append to list
-                  %{state | trace: state.trace ++ [key]}
-                end)
+              # map =
+              #   GridMap.update_state(map, fn state ->
+              #     # @todo remove trace as we append to list
+              #     %{state | trace: state.trace ++ [key]}
+              #   end)
 
               case GridMap.walk_path(map, pos, coords) do
                 {:ok, new_map} ->
@@ -299,4 +300,15 @@ end
 # #.....@.a.B.c.d.A.e.F.g#
 # ########################
 # """
+# """
+# ########################
+# #@..............ac.GI.b#
+# ###d#e#f################
+# ###A#B#C################
+# ###g#h#i################
+# ########################
+# """
+
+# "day18.puzzle"
+# |> File.read!()
 |> Day18.run()
