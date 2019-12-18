@@ -9,7 +9,8 @@ defmodule Vault do
       # keys collected
       ckeys: [],
       doors: %{},
-      steps: 0
+      steps: 0,
+      trace: []
     }
   end
 
@@ -105,7 +106,7 @@ defmodule Vault do
     if has_ckey?(state, key) do
       state
     else
-      IO.puts("Found a key: #{[key]}")
+      # IO.puts("Found a key: #{[key]}")
       %{state | ckeys: [key | state.ckeys]}
     end
   end
@@ -131,11 +132,27 @@ defmodule Day18 do
     # 
     # Finally, we flatten all our branches and check the one with the
     # least steps.
+
+    # tree =
+    #   map.state
+    #   |> Vault.missing_keys()
+    #   |> Enum.map(&elem(&1, 1))
+    #   |> compute_tree
+    #   |> IO.inspect()
+
     maps =
       walk_to_all_keys(map)
       |> :lists.flatten()
       |> find_least_steps
       |> IO.inspect(label: "Phase 1")
+  end
+
+  defp compute_tree(keys) do
+    keys
+    |> Enum.map(fn key ->
+      rest = keys -- [key]
+      %{node: key, branches: compute_tree(rest)}
+    end)
   end
 
   defp find_least_steps(maps) do
@@ -153,7 +170,7 @@ defmodule Day18 do
   defp find_least_steps_2([%{steps: h_steps} = h | t], %{steps: mini} = best),
     do: find_least_steps_2(t, best)
 
-  defp find_least_steps_2([], %{steps: steps}), do: steps
+  defp find_least_steps_2([], state), do: state
 
   defp walk_to_all_keys(maps) when is_list(maps) do
     IO.puts("Simulating #{length(maps)} states")
@@ -162,51 +179,82 @@ defmodule Day18 do
 
   defp walk_to_all_keys(%GridMap{} = map) do
     %{state: state} = map
-    %{pos: pos} = state
+    %{pos: pos, steps: steps} = state
+    indent = String.duplicate("  ", length(state.trace))
 
-    state
-    |> Vault.missing_keys()
-    |> case do
-      [] ->
-        # case Process.put({:found, state.ckeys}, true) do
-        #   true ->
-        #     raise "#{state.ckeys} has already be done"
+    # Check if this state has already been reached by another
+    # simulation. It is possible because we can walk over a key an
+    # pick it up when going for another one
 
-        #   nil ->
-        #     :ok
-        # end
+    # IO.puts("#{inspect({:steps, :lists.reverse(state.ckeys)})} => #{steps}")
 
-        IO.puts("All keys found #{format_keys(state.ckeys)} in #{state.steps} steps")
-        map
+    pkey = {:steps, Enum.sort(state.ckeys)}
 
-      keys ->
-        IO.puts(
-          "-- Missing #{length(keys)} keys #{format_keys(state.ckeys)} -> #{format_keys(keys)}"
-        )
+    case Process.get(pkey) do
+      better when better <= steps ->
+        IO.puts("Abandon seen state, better concurrent for #{state.ckeys}")
+        []
 
-        keys
-        |> Enum.reduce([], fn {coords, key}, maps ->
-          IO.puts("-- Go next key #{format_keys(state.ckeys)} -> #{[key]}")
+      _ ->
+        Process.put(pkey, steps)
 
-          case GridMap.walk_path(map, pos, coords) do
-            {:ok, new_map} ->
-              IO.puts("found path, collected #{new_map.state.ckeys}")
-              [new_map | maps]
+        state
+        |> Vault.missing_keys()
+        # |> Enum.sort_by(fn {_, k} -> k end)
+        # |> IO.inspect()
+        |> case do
+          [] ->
+            IO.puts(
+              "#{indent}All keys found #{format_keys(:lists.reverse(state.ckeys))} in #{
+                state.steps
+              } steps"
+            )
 
-            {:error, :no_path} ->
-              IO.puts("no path")
-              maps
-          end
-        end)
-        |> tap(fn maps ->
-          IO.puts("Recursion on #{length(maps)} maps")
-        end)
-        |> walk_to_all_keys()
+            map
+
+          keys ->
+            # IO.puts(
+            #   "-- Missing #{length(keys)} keys #{format_keys(state.ckeys)} -> #{format_keys(keys)}"
+            # )
+
+            keys
+            |> Enum.reduce([], fn {coords, key}, maps ->
+              # IO.puts("-- Go next key #{format_keys(state.ckeys)} -> #{[key]}")
+
+              map =
+                GridMap.update_state(map, fn state ->
+                  # @todo remove trace as we append to list
+                  %{state | trace: state.trace ++ [key]}
+                end)
+
+              case GridMap.walk_path(map, pos, coords) do
+                {:ok, new_map} ->
+                  # IO.puts("found path, collected #{new_map.state.ckeys}")
+                  # IO.inspect(new_map.state.trace, label: "trace")
+                  # IO.puts("#{indent}path found, now explore #{inspect(map.state.trace)} -> ?")
+                  [walk_to_all_keys(new_map) | maps]
+
+                # maps ++ [new_map]
+
+                {:error, :no_path} ->
+                  # IO.puts("#{indent}no path, abandon trace #{inspect(map.state.trace)}")
+                  # Process.sleep(1000)
+                  maps
+              end
+            end)
+
+            # |> tap(fn -> Process.sleep(1000) end)
+        end
     end
   end
 
-  defp tap(value, fun) do
+  defp tap(value, fun) when is_function(fun, 1) do
     fun.(value)
+    value
+  end
+
+  defp tap(value, fun) when is_function(fun, 0) do
+    fun.()
     value
   end
 

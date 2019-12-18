@@ -40,6 +40,10 @@ defmodule GridMap do
     %{this | max_xy: {x, y}}
   end
 
+  def update_state(%{state: state} = this, fun) do
+    %{this | state: fun.(state)}
+  end
+
   defp check_walkable(%{mod: mod, grid: grid, state: state}, coords) do
     case Map.fetch(grid, coords) do
       :error -> false
