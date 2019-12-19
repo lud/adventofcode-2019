@@ -1,39 +1,60 @@
 defmodule GridMap do
   @type coords :: {x :: integer, y :: integer}
 
+  @callback init() :: sate :: any
+
+  @callback walkable?({coords, content :: any}, state :: any) :: bool
+
+  @callback walk_over({coords, content :: any}, state :: any) :: state :: any
+
+  @callback parse_content({coords, integer}, state :: any) :: {content :: any, state :: any}
+
+  defstruct grid: %{}, mod: nil, state: nil, max_xy: nil, min_xy: {0, 0}
+
   @start_y 0
   @start_x 0
 
-  def parse_map(str, read_fn \\ &default_read/2) do
-    str
-    |> String.trim()
-    |> to_charlist
-    |> parse_chars(%{}, @start_x, @start_y, read_fn)
+  def parse_map(str, mod) do
+    this = %__MODULE__{mod: mod, state: mod.init()}
+
+    this =
+      str
+      |> String.trim()
+      |> to_charlist
+      |> parse_chars(this, @start_x, @start_y)
   end
 
-  def default_read(_, x), do: x
+  defp parse_chars([?\n | chars], this, x, y),
+    do: parse_chars(chars, this, @start_x, y + 1)
 
-  defp parse_chars([?\n | chars], grid, x, y, read_fn),
-    do: parse_chars(chars, grid, @start_x, y + 1, read_fn)
-
-  defp parse_chars([char | chars], grid, x, y, read_fn) do
+  defp parse_chars([char | chars], this, x, y) do
+    %{state: state, mod: mod, grid: grid} = this
     coords = {x, y}
-    content = read_fn.(coords, char)
+    {content, state} = mod.parse_content({coords, char}, state)
     grid = Map.put(grid, coords, content)
-
-    parse_chars(chars, grid, x + 1, y, read_fn)
+    this = %{this | state: state, grid: grid}
+    parse_chars(chars, this, x + 1, y)
   end
 
-  defp parse_chars([], grid, _, _, _) do
-    grid
+  defp parse_chars([], this, x, y) do
+    %{this | max_xy: {x, y}}
   end
 
-  def reduce(grid, state, fun) do
-    Enum.reduce(grid, state, fun)
+  def update_state(%{state: state} = this, fun) do
+    %{this | state: fun.(state)}
   end
 
-  def find(grid, predicate) do
-    Enum.find(grid, predicate)
+  defp check_walkable(%{mod: mod, grid: grid, state: state}, coords) do
+    case Map.fetch(grid, coords) do
+      :error -> false
+      {:ok, content} -> mod.walkable?({coords, content}, state)
+    end
+  end
+
+  defp do_walk_path(coords, %{mod: mod, grid: grid, state: state} = map) do
+    content = Map.fetch!(grid, coords)
+    state = mod.walk_over({coords, content}, state)
+    %{map | state: state}
   end
 
   # A* Algorithm
@@ -44,29 +65,38 @@ defmodule GridMap do
   # A* node
   Record.defrecord(:anode, coords: nil, parent_xy: nil, h: nil, c: nil)
 
-  def get_path(grid, from, to, walkable?) do
-    # @todo check if <from> and <to> are walkable    
-    astar_main(grid, from, to, walkable?)
+  def walk_path(map, from, from),
+    do: {:ok, map}
+
+  def walk_path(map, from, to) do
+    # init the root node
+    case astar(map, from, to) do
+      {:ok, path} ->
+        {:ok, Enum.reduce(path, map, &do_walk_path/2)}
+
+      other ->
+        other
+    end
   end
 
-  defp astar_main(grid, from, to, walkable?) do
+  defp astar(map, from, to) do
     # IO.puts("wal from #{inspect(from)} to #{inspect(to)}")
-    parent_xy = :__root__
+    parent_xy = :root
     root = anode(parent_xy: parent_xy, coords: from, h: 0, c: 0)
     open = [root]
     closed = %{}
 
     try do
-      astar(grid, to, open, closed, walkable?)
+      astar(map, to, open, closed)
     catch
       {:reached, path} -> {:ok, path}
     end
   end
 
-  defp astar(_, _, [] = open, _, _),
+  defp astar(_, _, [] = open, _),
     do: {:error, :no_path}
 
-  defp astar(grid, to, open0, closed, walkable?) do
+  defp astar(map, to, open0, closed) do
     [best | open1] = open0
     # IO.inspect(best, label: "Best")
     neighbour_cost = 1 + anode(best, :c)
@@ -76,7 +106,7 @@ defmodule GridMap do
       best
       |> anode(:coords)
       |> cardinal_neighbours()
-      |> Enum.filter(fn coords -> walkable?.(Map.get(grid, coords)) end)
+      |> Enum.filter(fn coords -> check_walkable(map, coords) end)
       # we throw if we found our destination. We filter before in case
       # we try to get a path to a non-walkable node
       |> Enum.map(fn
@@ -102,7 +132,7 @@ defmodule GridMap do
       end)
 
     closed = Map.put(closed, best_xy, best)
-    astar(grid, to, open2, closed, walkable?)
+    astar(map, to, open2, closed)
   end
 
   # Insert a node on the open list. Objects are inserted in heuristic order
@@ -149,7 +179,7 @@ defmodule GridMap do
       # Do not reverse(path) as we build it backwards from the
       # destination.
       # Also we do not set the root position in the path
-      :__root__ ->
+      :root ->
         path
 
       other ->
@@ -160,7 +190,17 @@ defmodule GridMap do
 
   # finding neighbours
 
-  defp cardinal_neighbours({x, y}) do
-    [{x, y - 1}, {x, y + 1}, {x + 1, y}, {x - 1, y}]
+  defp move_coords({x, y}, :up), do: {x, y - 1}
+  defp move_coords({x, y}, :down), do: {x, y + 1}
+  defp move_coords({x, y}, :right), do: {x + 1, y}
+  defp move_coords({x, y}, :left), do: {x - 1, y}
+
+  defp cardinal_neighbours({_, _} = coords) do
+    [
+      move_coords(coords, :up),
+      move_coords(coords, :down),
+      move_coords(coords, :right),
+      move_coords(coords, :left)
+    ]
   end
 end

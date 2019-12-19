@@ -1,284 +1,140 @@
-defmodule Vault do
+defmodule PathFinder do
   @behaviour GridMap
-  def init() do
-    %{
-      # position of robot
-      pos: nil,
-      # keys laying on the floor
-      keys: %{},
-      # keys collected
-      ckeys: [],
-      doors: %{},
-      steps: 0,
-      trace: []
-    }
-  end
+end
 
+defmodule Day18 do
   @wall ?#
   @empty ?.
   @entrance ?@
 
+  def run(puzzle) do
+    grid = GridMap.parse_map(puzzle)
+    keys = GridMap.reduce(grid, %{}, &read_keys/2)
+
+    {entrance_xy, @entrance} =
+      GridMap.find(grid, fn
+        {_, @entrance} -> true
+        _ -> false
+      end)
+
+    knames = Map.keys(keys)
+
+    max_distance =
+      keys
+      |> Enum.reduce(0, fn {_, coords}, max_d ->
+        {:ok, path} = get_free_path(grid, entrance_xy, coords)
+        max(length(path), max_d)
+      end)
+
+    # ckeys: collected keys
+    # mkeys: missing keys
+    init_state = %{ckeys: [], mkeys: knames, steps: 0, pos: entrance_xy}
+    walk_to_all_keys(grid, init_state, keys, :infinity, max_distance)
+  end
+
+  defp walk_to_all_keys(grid, %{mkeys: [], steps: steps} = state, keys, best, _) do
+    min(steps, best)
+  end
+
+  @dist_ratio 0.8
+
+  defp walk_to_all_keys(grid, state, keys, best, max_distance) do
+    %{mkeys: mkeys, ckeys: ckeys, pos: pos, steps: steps} = state
+
+    # Check if it is a dumb path
+    cklen = length(ckeys)
+
+    distance_per_key =
+      if cklen > 0 do
+        trunc(steps / cklen)
+      else
+        0
+      end
+
+    if cklen > 0 and steps > max_distance * cklen * @dist_ratio do
+      IO.puts("skip #{ckeys}")
+      best
+    else
+      IO.puts("#{ckeys} -> #{mkeys}")
+      # create a new branch for all missing keys. 
+      # collected keys (ckeys) are always sorted to help caching paths
+      Enum.reduce(mkeys, best, fn mk, best ->
+        destination = Map.fetch!(keys, mk)
+
+        case path_length(grid, pos, destination, ckeys) do
+          :error ->
+            IO.puts("Path failed")
+            best
+
+          add_steps ->
+            new_ckeys = Enum.sort([mk | ckeys])
+            new_mkeys = mkeys -- [mk]
+            new_steps = steps + add_steps
+
+            state = %{
+              state
+              | steps: new_steps,
+                ckeys: new_ckeys,
+                mkeys: new_mkeys,
+                pos: destination
+            }
+
+            walk_to_all_keys(grid, state, keys, best, max_distance)
+        end
+      end)
+    end
+  end
+
+  defp path_length(grid, from, to, ckeys) do
+    # use process cache
+    pkey = {from, to, ckeys}
+
+    case Process.get(pkey) do
+      nil ->
+        IO.puts("calc path")
+
+        value =
+          case get_path(grid, from, to, ckeys) do
+            {:ok, path} -> length(path)
+            {:error, :no_path} -> :error
+          end
+
+        Process.put(pkey, value)
+        value
+
+      value ->
+        value
+    end
+  end
+
   defguard is_key(key) when key >= ?a and key <= ?z
   defguard is_door(door) when door >= ?A and door <= ?Z
 
-  def missing_keys(%{keys: keys, ckeys: ckeys}) do
-    keys
-    |> Enum.filter(fn {coords, key} -> not :lists.member(key, ckeys) end)
-  end
-
-  def parse_content({_coords, @wall}, state),
-    do: {@wall, state}
-
-  def parse_content({_coords, @empty}, state),
-    do: {@empty, state}
-
-  def parse_content({coords, key}, state) when is_key(key) do
-    state = register_key(state, coords, key)
-    {key, state}
-  end
-
-  def parse_content({coords, door}, state) when door >= ?A and door <= ?Z do
-    state = register_door(state, coords, door)
-    {door, state}
-  end
-
-  def parse_content({coords, @entrance}, state) do
-    {@entrance, %{state | pos: coords}}
-  end
-
-  def parse_content({coords, char}, state) do
-    raise "unknown content '#{[char]}'"
-  end
-
-  defp register_key(state, coords, key) do
-    %{keys: fkeys} = state
-    %{state | keys: Map.put(fkeys, coords, key)}
-  end
-
-  defp register_door(state, coords, door) do
-    %{doors: doors} = state
-    %{state | doors: Map.put(doors, coords, door)}
-  end
-
-  def walkable?({coords, typ}, state) when typ in [@entrance, @empty],
-    do: true
-
-  def walkable?({coords, @wall}, state),
-    do: false
-
-  def walkable?({coords, key}, state) when is_key(key),
-    do: true
-
-  def walkable?({coords, door}, state) when is_door(door) do
-    key = door + 32
-    has_ckey?(state, key)
-  end
-
-  def walkable?({coords, key}, _state),
-    do: raise("@todo walkable? unknown '#{[key]}'")
-
-  def walk_over({coords, char}, state) do
-    # When walking over a door we check nothing as our pathfinding 
-    # knows if the door is walkable
-    if is_key(char) do
-      maybe_add_key(state, char)
-    else
-      state
-    end
-    |> increment_steps()
-    |> set_position(coords)
-  end
-
-  def walk_over({coords, key}, state),
-    do: raise("@todo walk over unknown '#{[key]}'")
-
-  defp set_position(state, pos),
-    do: Map.put(state, :pos, pos)
-
-  # def walk_over({coords, content}, state) do
-  # end
-  defp increment_steps(%{steps: n} = state) do
-    # IO.puts("STEP #{n} -> #{n + 1}")
-    %{state | steps: n + 1}
-  end
-
-  defp maybe_add_key(state, key) do
-    if has_ckey?(state, key) do
-      state
-    else
-      # IO.puts("Found a key: #{[key]}")
-      %{state | ckeys: [key | state.ckeys]}
-    end
-  end
-
-  defp has_ckey?(%{ckeys: ckeys}, key) do
-    :lists.member(key, ckeys)
-  end
-end
-
-defmodule Day18 do
-  def run(str_map) do
-    map = GridMap.parse_map(str_map, Vault)
-    # Now for each key that is not collected, we will check if we can
-    # go there.
-    # 
-    # If we can go, we create a new copy of map/state, and make it go
-    # there, collecting the target key (and any other on the way) when
-    # walking on it, and registering how much steps we made, and order
-    # of collected keys.
-    #
-    # Then we loop, branching at each time. When there is no more key
-    # to collect in a map/state branch, it is stopped.
-    # 
-    # Finally, we flatten all our branches and check the one with the
-    # least steps.
-
-    # tree =
-    #   map.state
-    #   |> Vault.missing_keys()
-    #   |> Enum.map(&elem(&1, 1))
-    #   |> compute_tree
-    #   |> IO.inspect()
-
-    maps =
-      walk_to_all_keys(map)
-      |> :lists.flatten()
-      |> find_least_steps
-      |> IO.inspect(label: "Phase 1")
-  end
-
-  defp compute_tree(keys) do
-    keys
-    |> Enum.map(fn key ->
-      rest = keys -- [key]
-      %{node: key, branches: compute_tree(rest)}
+  defp get_path(grid, from, to, ckeys) do
+    GridMap.get_path(grid, from, to, fn
+      @wall -> false
+      @entrance -> true
+      @empty -> true
+      key when is_key(key) -> true
+      door when is_door(door) -> :lists.member(door_to_key(door), ckeys)
     end)
   end
 
-  defp find_least_steps(maps) do
-    maps
-    |> Enum.map(fn %GridMap{} = map -> map.state end)
-    |> find_least_steps_2
+  defp get_free_path(grid, from, to) do
+    GridMap.get_path(grid, from, to, fn
+      @wall -> false
+      _ -> true
+    end)
   end
 
-  defp find_least_steps_2([h | t]),
-    do: find_least_steps_2(t, h)
+  defp door_to_key(door),
+    do: door + 32
 
-  defp find_least_steps_2([%{steps: h_steps} = h | t], %{steps: mini}) when h_steps < mini,
-    do: find_least_steps_2(t, h)
+  defp read_keys({coords, key}, keys) when is_key(key),
+    do: Map.put(keys, key, coords)
 
-  defp find_least_steps_2([%{steps: h_steps} = h | t], %{steps: mini} = best),
-    do: find_least_steps_2(t, best)
-
-  defp find_least_steps_2([], state), do: state
-
-  defp walk_to_all_keys(maps) when is_list(maps) do
-    IO.puts("Simulating #{length(maps)} states")
-    x = for map <- maps, do: walk_to_all_keys(map)
-  end
-
-  defp walk_to_all_keys(%GridMap{} = map) do
-    %{state: state} = map
-    %{pos: pos, steps: steps} = state
-    indent = String.duplicate("  ", length(state.ckeys))
-
-    # Check if this state has already been reached by another
-    # simulation. It is possible because we can walk over a key an
-    # pick it up when going for another one
-
-    # IO.puts("#{inspect({:steps, :lists.reverse(state.ckeys)})} => #{steps}")
-
-    sorted = Enum.sort(state.ckeys)
-    pkey = {:steps, sorted}
-
-    case Process.get(pkey) do
-      better when better <= steps ->
-        IO.puts("Abandon seen state, better concurrent for #{format_keys(sorted)}")
-        []
-
-      _ ->
-        Process.put(pkey, steps)
-
-        state
-        |> Vault.missing_keys()
-        # |> Enum.sort_by(fn {_, k} -> k end)
-        # |> IO.inspect()
-        |> case do
-          [] ->
-            IO.puts(
-              "#{indent}All keys found #{format_keys(:lists.reverse(state.ckeys))} in #{
-                state.steps
-              } steps"
-            )
-
-            map
-
-          keys ->
-            # IO.puts(
-            #   "-- Missing #{length(keys)} keys #{format_keys(state.ckeys)} -> #{format_keys(keys)}"
-            # )
-
-            keys
-            |> Enum.reduce([], fn {coords, key}, maps ->
-              # IO.puts("-- Go next key #{format_keys(state.ckeys)} -> #{[key]}")
-
-              # map =
-              #   GridMap.update_state(map, fn state ->
-              #     # @todo remove trace as we append to list
-              #     %{state | trace: state.trace ++ [key]}
-              #   end)
-
-              case GridMap.walk_path(map, pos, coords) do
-                {:ok, new_map} ->
-                  # IO.puts("found path, collected #{new_map.state.ckeys}")
-                  # IO.inspect(new_map.state.trace, label: "trace")
-                  # IO.puts("#{indent}path found, now explore #{inspect(map.state.trace)} -> ?")
-                  [walk_to_all_keys(new_map) | maps]
-
-                # maps ++ [new_map]
-
-                {:error, :no_path} ->
-                  # IO.puts("#{indent}no path, abandon trace #{inspect(map.state.trace)}")
-                  # Process.sleep(1000)
-                  maps
-              end
-            end)
-
-            # |> tap(fn -> Process.sleep(1000) end)
-        end
-    end
-  end
-
-  defp tap(value, fun) when is_function(fun, 1) do
-    fun.(value)
-    value
-  end
-
-  defp tap(value, fun) when is_function(fun, 0) do
-    fun.()
-    value
-  end
-
-  # defp format_keys(keys) when is_map(keys) do
-  #   keys
-  #   |> Map.values()
-  #   |> IO.inspect()
-  #   |> format_keys
-  # end
-
-  defp format_keys([{{_, _}, _} = h | _] = keys) do
-    keys
-    |> Enum.map(&elem(&1, 1))
-    |> format_keys
-  end
-
-  defp format_keys([i | _] = keys) when is_list(keys) and is_integer(i) do
-    Enum.intersperse(keys, ?,)
-  end
-
-  defp format_keys([]) do
-    "no-keys"
-  end
+  defp read_keys(_, keys),
+    do: keys
 end
 
 """
@@ -300,6 +156,7 @@ end
 # #.....@.a.B.c.d.A.e.F.g#
 # ########################
 # """
+
 # """
 # ########################
 # #@..............ac.GI.b#
@@ -312,3 +169,4 @@ end
 # "day18.puzzle"
 # |> File.read!()
 |> Day18.run()
+|> IO.inspect()
