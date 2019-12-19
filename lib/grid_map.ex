@@ -163,4 +163,31 @@ defmodule GridMap do
   defp cardinal_neighbours({x, y}) do
     [{x, y - 1}, {x, y + 1}, {x + 1, y}, {x - 1, y}]
   end
+
+  def render_map(grid, render_tile) do
+    {min_x, min_y} = min_coords(grid)
+    {max_x, max_y} = max_coords(grid)
+
+    for y <- min_y..max_y do
+      for x <- min_x..max_x do
+        render_tile.({x, y}, Map.get(grid, {x, y}))
+      end
+    end
+  end
+
+  def max_coords(grid) do
+    grid
+    |> Map.keys()
+    |> Enum.reduce(fn {x, y}, {max_x, max_y} ->
+      {max(x, max_x), max(y, max_y)}
+    end)
+  end
+
+  def min_coords(grid) do
+    grid
+    |> Map.keys()
+    |> Enum.reduce(fn {x, y}, {min_x, min_y} ->
+      {min(x, min_x), min(y, min_y)}
+    end)
+  end
 end

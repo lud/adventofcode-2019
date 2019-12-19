@@ -66,18 +66,24 @@ defmodule Cpu do
     end
   end
 
-  def run!(intcodes, opts \\ []) when is_binary(intcodes) do
+  def run!(intcodes, opts \\ []) do
     case run(intcodes, opts) do
       {:ok, data} -> data
     end
   end
 
-  def run(intcodes, opts \\ []) when is_binary(intcodes) do
-    program =
-      intcodes
-      |> parse_intcodes
-      |> apply_opts(opts)
-      |> loop()
+  def run(intcodes, opts \\ [])
+
+  def run(intcodes, opts) when is_binary(intcodes) do
+    intcodes
+    |> parse_intcodes
+    |> run
+  end
+
+  def run(%State{} = state, opts) do
+    state
+    |> apply_opts(opts)
+    |> loop()
   end
 
   defp apply_opts(state, opts) do
@@ -101,7 +107,7 @@ defmodule Cpu do
     raise "Unknown option: #{inspect(opt)}"
   end
 
-  defp parse_intcodes(str) do
+  def parse_intcodes(str) do
     memory =
       str
       |> String.trim()
@@ -164,6 +170,8 @@ defmodule Cpu do
   defp execute(state, %{op: 3, modes: modes}) do
     {{outpos}, state} = multiread(state, [:offset], modes)
     {val, iostate} = state.io.({:input, state.iostate})
+    # IO.inspect(val, label: "Input")
+    # IO.inspect(iostate, label: "New state")
 
     state
     |> State.write(outpos, val)
