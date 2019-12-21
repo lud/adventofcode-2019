@@ -18,8 +18,12 @@ defmodule GridMap do
 
   defp parse_chars([char | chars], grid, x, y, read_fn) do
     coords = {x, y}
-    content = read_fn.(coords, char)
-    grid = Map.put(grid, coords, content)
+
+    grid =
+      case read_fn.(coords, char) do
+        :ignore -> grid
+        content -> Map.put(grid, coords, content)
+      end
 
     parse_chars(chars, grid, x + 1, y, read_fn)
   end
@@ -28,9 +32,14 @@ defmodule GridMap do
     grid
   end
 
-  def reduce(grid, state, fun) do
+  def reduce(grid, state, fun) when is_function(fun, 2) do
     Enum.reduce(grid, state, fun)
   end
+
+  # reduce with fun/3 that also accepts the grid
+  # def reduce(grid, state, fun) when is_function(fun, 3) do
+  #   Enum.reduce(grid, state, fn elem, state -> fun.(elem, state, grid) end)
+  # end
 
   def find(grid, predicate) do
     Enum.find(grid, predicate)
@@ -44,12 +53,33 @@ defmodule GridMap do
   # A* node
   Record.defrecord(:anode, coords: nil, parent_xy: nil, h: nil, c: nil)
 
-  def get_path(grid, from, to, walkable?) do
-    # @todo check if <from> and <to> are walkable    
-    astar_main(grid, from, to, walkable?)
+  def get_path!(grid, from, to, opts) do
+    case get_path(grid, from, to, opts) do
+      {:ok, path} -> path
+      {:error, :no_path} -> raise "Could not find a path from #{inspect(from)} to #{inspect(to)}"
+    end
   end
 
-  defp astar_main(grid, from, to, walkable?) do
+  def get_path(grid, from, to, walkable?) when is_function(walkable?) do
+    get_path(grid, from, to, walkable?: walkable?)
+    # @todo check if <from> and <to> are walkable    
+  end
+
+  def get_path(grid, from, to, opts) do
+    walkable? = Keyword.fetch!(opts, :walkable?)
+
+    get_neighbours =
+      case Keyword.fetch(opts, :neighbours) do
+        {:ok, f} when is_function(f, 1) -> f
+        :error -> &cardinal_neighbours/1
+      end
+
+    heuristic = Keyword.get(opts, :heuristic, &manhattan/2)
+
+    astar_main(grid, from, to, walkable?, get_neighbours, heuristic)
+  end
+
+  defp astar_main(grid, from, to, walkable?, get_neighbours, heuristic) do
     # IO.puts("wal from #{inspect(from)} to #{inspect(to)}")
     parent_xy = :__root__
     root = anode(parent_xy: parent_xy, coords: from, h: 0, c: 0)
@@ -57,16 +87,16 @@ defmodule GridMap do
     closed = %{}
 
     try do
-      astar(grid, to, open, closed, walkable?)
+      astar(grid, to, open, closed, walkable?, get_neighbours, heuristic)
     catch
       {:reached, path} -> {:ok, path}
     end
   end
 
-  defp astar(_, _, [] = open, _, _),
+  defp astar(_, _, [] = open, _, _, _, _),
     do: {:error, :no_path}
 
-  defp astar(grid, to, open0, closed, walkable?) do
+  defp astar(grid, to, open0, closed, walkable?, get_neighbours, heuristic) do
     [best | open1] = open0
     # IO.inspect(best, label: "Best")
     neighbour_cost = 1 + anode(best, :c)
@@ -75,7 +105,7 @@ defmodule GridMap do
     open2 =
       best
       |> anode(:coords)
-      |> cardinal_neighbours()
+      |> get_neighbours.()
       |> Enum.filter(fn coords -> walkable?.(Map.get(grid, coords)) end)
       # we throw if we found our destination. We filter before in case
       # we try to get a path to a non-walkable node
@@ -95,14 +125,14 @@ defmodule GridMap do
         end
       end)
       |> Enum.reduce(open1, fn coords, open ->
-        distance = manhattan(coords, to)
+        distance = heuristic.(coords, to)
         h = neighbour_cost + distance
         node = anode(parent_xy: best_xy, c: neighbour_cost, h: h, coords: coords)
         insert_node(open, node)
       end)
 
     closed = Map.put(closed, best_xy, best)
-    astar(grid, to, open2, closed, walkable?)
+    astar(grid, to, open2, closed, walkable?, get_neighbours, heuristic)
   end
 
   # Insert a node on the open list. Objects are inserted in heuristic order
@@ -160,7 +190,7 @@ defmodule GridMap do
 
   # finding neighbours
 
-  defp cardinal_neighbours({x, y}) do
+  def cardinal_neighbours({x, y}) do
     [{x, y - 1}, {x, y + 1}, {x + 1, y}, {x - 1, y}]
   end
 
@@ -174,6 +204,12 @@ defmodule GridMap do
       end
     end
   end
+
+  def move_coords(coords, direction, amount \\ 1)
+  def move_coords({x, y}, :up, amount), do: {x, y - amount}
+  def move_coords({x, y}, :down, amount), do: {x, y + amount}
+  def move_coords({x, y}, :right, amount), do: {x + amount, y}
+  def move_coords({x, y}, :left, amount), do: {x - amount, y}
 
   def max_coords(grid) do
     grid

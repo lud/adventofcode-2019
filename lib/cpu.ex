@@ -133,8 +133,11 @@ defmodule Cpu do
   end
 
   defp parse_opcode(int) when is_integer(int) do
-    [9, mode3, mode2, mode1, op1, op2] = Integer.digits(900_000 + int)
-    %Com{op: Integer.undigits([op1, op2]), modes: [mode1, mode2, mode3]}
+    op = rem(int, 100)
+    mode1 = div(rem(int, 1000), 100)
+    mode2 = div(rem(int, 10000), 1000)
+    mode3 = div(rem(int, 100_000), 10000)
+    %Com{op: op, modes: [mode1, mode2, mode3]}
   end
 
   defp multiread(state, actions, modes) do

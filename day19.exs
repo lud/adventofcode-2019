@@ -21,7 +21,7 @@ defmodule Day19 do
     search_ship(make_fringes())
   end
 
-  @ship_size 100
+  @ship_size 2
 
   defp search_ship(fringes) do
     # first search for any match
