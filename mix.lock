@@ -1,0 +1,3 @@
+%{
+  "decompilerl": {:git, "https://github.com/niahoo/decompilerl.git", "71a6a41231bd1b1c637d20154144d08a0ecb1dbb", [branch: "master"]},
+}

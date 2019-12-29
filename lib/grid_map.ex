@@ -32,8 +32,21 @@ defmodule GridMap do
     grid
   end
 
+  def to_list(grid) do
+    Enum.to_list(grid)
+  end
+
   def reduce(grid, state, fun) when is_function(fun, 2) do
     Enum.reduce(grid, state, fun)
+  end
+
+  def fmap(grid, fun) when is_function(fun, 2) do
+    grid
+    |> Enum.map(fn {coords, content} ->
+      new_content = fun.(coords, content)
+      {coords, new_content}
+    end)
+    |> Enum.into(%{})
   end
 
   # reduce with fun/3 that also accepts the grid
@@ -41,9 +54,8 @@ defmodule GridMap do
   #   Enum.reduce(grid, state, fn elem, state -> fun.(elem, state, grid) end)
   # end
 
-  def find(grid, predicate) do
-    Enum.find(grid, predicate)
-  end
+  def find(grid, default \\ nil, predicate),
+    do: Enum.find(grid, default, predicate)
 
   # A* Algorithm
   #
@@ -66,7 +78,11 @@ defmodule GridMap do
   end
 
   def get_path(grid, from, to, opts) do
-    walkable? = Keyword.fetch!(opts, :walkable?)
+    walkable? =
+      case Keyword.fetch!(opts, :walkable?) do
+        fun when is_function(fun, 1) -> fn _coords, content -> fun.(content) end
+        fun when is_function(fun, 2) -> fun
+      end
 
     get_neighbours =
       case Keyword.fetch(opts, :neighbours) do
@@ -106,7 +122,7 @@ defmodule GridMap do
       best
       |> anode(:coords)
       |> get_neighbours.()
-      |> Enum.filter(fn coords -> walkable?.(Map.get(grid, coords)) end)
+      |> Enum.filter(fn coords -> walkable?.(coords, Map.get(grid, coords)) end)
       # we throw if we found our destination. We filter before in case
       # we try to get a path to a non-walkable node
       |> Enum.map(fn
@@ -194,6 +210,10 @@ defmodule GridMap do
     [{x, y - 1}, {x, y + 1}, {x + 1, y}, {x - 1, y}]
   end
 
+  def render_map(grid) do
+    render_map(grid, fn _, x -> x end)
+  end
+
   def render_map(grid, render_tile) do
     {min_x, min_y} = min_coords(grid)
     {max_x, max_y} = max_coords(grid)
@@ -205,6 +225,18 @@ defmodule GridMap do
     end
   end
 
+  def print_map(grid) do
+    print_map(grid, fn _, x -> x end)
+  end
+
+  def print_map(grid, render_tile) do
+    render_map(grid, render_tile)
+    |> Enum.intersperse(?\n)
+    |> IO.puts()
+
+    grid
+  end
+
   def move_coords(coords, direction, amount \\ 1)
   def move_coords({x, y}, :up, amount), do: {x, y - amount}
   def move_coords({x, y}, :down, amount), do: {x, y + amount}
@@ -214,16 +246,18 @@ defmodule GridMap do
   def max_coords(grid) do
     grid
     |> Map.keys()
-    |> Enum.reduce(fn {x, y}, {max_x, max_y} ->
-      {max(x, max_x), max(y, max_y)}
+    |> Enum.reduce({-999_999_999, -999_999_999}, fn
+      {x, y}, {max_x, max_y} -> {max(x, max_x), max(y, max_y)}
+      _, acc -> acc
     end)
   end
 
   def min_coords(grid) do
     grid
     |> Map.keys()
-    |> Enum.reduce(fn {x, y}, {min_x, min_y} ->
-      {min(x, min_x), min(y, min_y)}
+    |> Enum.reduce({:infinity, :infinity}, fn
+      {x, y}, {min_x, min_y} -> {min(x, min_x), min(y, min_y)}
+      _, acc -> acc
     end)
   end
 end
