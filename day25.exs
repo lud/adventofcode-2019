@@ -46,7 +46,6 @@ defmodule Day25 do
     {state, []} =
       Enum.reduce(actions, {state, lines}, fn action, {state, lines} ->
         {action_data, lines} = parse_action(action, lines)
-        IO.puts("Apply action #{inspect(action_data)}")
         state = apply_action(action_data.__type, action_data, state)
         {state, lines}
       end)
@@ -261,19 +260,19 @@ defmodule Day25 do
     |> update_in([room_name, door], fn current ->
       case {current, destination} do
         {known, :unknown_room} when is_binary(known) ->
-          IO.puts("not erasing path #{room_name} -- #{door} --> #{known}")
+          # IO.puts("not erasing path #{room_name} -- #{door} --> #{known}")
           known
 
         {same, same} ->
-          IO.puts("already known #{room_name} -- #{door} --> #{same}")
+          # IO.puts("already known #{room_name} -- #{door} --> #{same}")
           same
 
         {nil, :unknown_room} ->
-          IO.puts("register door: #{room_name} -- #{door} --> #{destination}")
+          # IO.puts("register door: #{room_name} -- #{door} --> #{destination}")
           destination
 
         {:unknown_room, destination} ->
-          IO.puts("register door: #{room_name} -- #{door} --> #{destination}")
+          # IO.puts("register door: #{room_name} -- #{door} --> #{destination}")
           destination
       end
     end)
@@ -341,35 +340,36 @@ defmodule Day25 do
   defp create_actions(:try_items, state) do
     carried = carried_items(state)
 
+    works =
+      1..4
+      |> Enum.map(&combinations(carried, &1))
+      |> :lists.flatten()
+
     state
     |> goto_room("Security Checkpoint")
     |> drop_carried_items()
-    |> Map.put(:chapter, {:try_items, carried})
+    |> Map.put(:chapter, {:try_items, carried, works})
   end
 
-  defp create_actions({:try_items, tryables}, state) do
-    pause
+  defp create_actions({:try_items, tryables, []}, state) do
+    exit(:no_work)
+  end
 
+  defp create_actions({:try_items, tryables, [work | works]}, state) do
     case state.current_room do
       "Pressure-Sensitive Floor" ->
         exit(:WIIIIIIIN)
 
       "Security Checkpoint" ->
-        state
-        |> IO.inspect()
-        |> drop_carried_items
-        # |> take_item("loom")
-        # |> take_item("planetoid")
-        # |> take_item("space law space brochure")
-        |> take_item("space heater")
-        |> take_item("sand")
-        |> take_item("pointer")
-        |> take_item("wreath")
-        |> take_item("festive hat")
-        # |> IOBuffer.push(:input, 'inv\n')
-        #
-        |> goto_room("Pressure-Sensitive Floor")
-        |> Map.put(:chapter, {:try_items, tryables})
+        state = drop_carried_items(state)
+        {:combination, items} = work
+        IO.puts("will try #{inspect(items)}")
+
+        state =
+          items
+          |> Enum.reduce(state, fn item, state -> take_item(state, item) end)
+          |> goto_room("Pressure-Sensitive Floor")
+          |> Map.put(:chapter, {:try_items, tryables, works})
     end
   end
 
@@ -386,15 +386,6 @@ defmodule Day25 do
     Enum.reduce(carried, state, fn item, state ->
       drop_item(state, item)
     end)
-  end
-
-  defp stop(msg, state \\ nil) do
-    if state do
-      IO.inspect(state)
-    end
-
-    Process.sleep(100)
-    raise msg
   end
 
   defp take_item(state, item) do
@@ -453,13 +444,11 @@ defmodule Day25 do
     open = Map.to_list(next)
 
     try do
-      IO.puts("find path from #{origin} to #{destination}")
+      # IO.puts("find path from #{origin} to #{destination}")
       get_path(paths, open, destination, %{})
       raise "Path not found"
     catch
       {:path_found, ancestry} ->
-        # IO.puts("found path from #{origin} to #{destination}")
-        # IO.puts("ancestry: #{inspect(ancestry)}")
         reduce_path(ancestry, origin, destination, [])
     end
   end
@@ -514,6 +503,20 @@ defmodule Day25 do
     # append next_open so we are breadth first
     open = open ++ next_open
     get_path(paths, open, destination, ancestry)
+  end
+
+  def combinations(list, num) do
+    do_combinations(list, num)
+    |> Enum.map(&{:combination, &1})
+  end
+
+  def do_combinations(list, num)
+  def do_combinations(_list, 0), do: [[]]
+  def do_combinations(list = [], _num), do: list
+
+  def do_combinations([head | tail], num) do
+    Enum.map(do_combinations(tail, num - 1), &[head | &1]) ++
+      do_combinations(tail, num)
   end
 
   defp pause() do
