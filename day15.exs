@@ -282,11 +282,11 @@ defmodule Day15 do
     |> IO.write()
   end
 
-  defp render_tile(@unknown), do: [IO.ANSI.light_blue(), "?", IO.ANSI.reset()]
-  defp render_tile(@wall), do: [IO.ANSI.yellow(), "■", IO.ANSI.reset()]
+  defp render_tile(@unknown), do: [IO.ANSI.light_black_background(), "?", IO.ANSI.reset()]
+  defp render_tile(@wall), do: [IO.ANSI.black_background(), " ", IO.ANSI.reset()]
   defp render_tile(@system), do: [IO.ANSI.green_background(), "S", IO.ANSI.reset()]
-  defp render_tile(@empty), do: " "
-  defp render_tile(:droid), do: "X"
+  defp render_tile(@empty), do: [IO.ANSI.white_background(), " ", IO.ANSI.reset()]
+  defp render_tile(:droid), do: [IO.ANSI.white_background(), IO.ANSI.red(), "X", IO.ANSI.reset()]
   defp render_tile(@oxygen), do: [IO.ANSI.blue_background(), "~", IO.ANSI.reset()]
   defp render_tile(nil), do: " "
 

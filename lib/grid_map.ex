@@ -157,7 +157,7 @@ defmodule GridMap do
     do: [cur | insert_node(open, n)]
 
   def insert_node(open, n),
-    # we have a bigger heuristic now so we insert in the list
+    # we have a lower heuristic than the tail now so we insert in the list
     do: [n | open]
 
   # Check if the open list contains a node with same coordinates but a lower cost

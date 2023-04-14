@@ -77,7 +77,7 @@ defmodule Cpu do
   def run(intcodes, opts) when is_binary(intcodes) do
     intcodes
     |> parse_intcodes
-    |> run
+    |> run(opts)
   end
 
   def run(%State{} = state, opts) do
@@ -173,6 +173,7 @@ defmodule Cpu do
   defp execute(state, %{op: 3, modes: modes}) do
     {{outpos}, state} = multiread(state, [:offset], modes)
     {val, iostate} = state.io.({:input, state.iostate})
+
     # IO.inspect(val, label: "Input")
     # IO.inspect(iostate, label: "New state")
 
